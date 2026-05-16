@@ -1,0 +1,273 @@
+# =============================================================================
+# AETHERA AI — LITELLM PROXY CONFIGURATION
+# =============================================================================
+# Unifies all LLM providers behind one OpenAI-compatible API.
+# Model cascade: Ollama Cloud → HuggingFace → Ollama Local
+#
+# Architecture:
+#   User Query → Sensitivity Check (PHI/PII detection)
+#       │
+#       ├── Contains PHI/PII → FORCE Ollama Local (never leaves machine)
+#       │
+#       └── Safe for cloud → Model Cascade:
+#            ├── Simple/fast     → aethera-local-fast  (qwen3.5:4b on GPU)
+#            ├── Medium          → aethera-cloud-tools (gemma4:26b)
+#            ├── Complex         → aethera-cloud-brain (qwen3.5:122b)
+#            ├── Deep reasoning  → aethera-cloud-reason (deepseek-v4-flash)
+#            ├── Coding          → aethera-cloud-coder (kimi-k2.6)
+#            ├── Multi-agent     → aethera-cloud-agent (nemotron-3-super)
+#            ├── Overflow        → hf-qwen-72b (HuggingFace free tier)
+#            └── All exhausted   → aethera-local-smart (qwen3.5:9b on CPU)
+# =============================================================================
+
+model_list:
+  # ==========================================================================
+  # LOCAL MODELS — Run on laptop, unlimited, private, GPU-accelerated
+  # Ollama container with NVIDIA MX450 (2GB VRAM) passthrough
+  # ==========================================================================
+
+  # qwen3.5:4b — GPU-accelerated on MX450 (~2.5GB VRAM)
+  # Primary local model: fast for simple queries, PHI-safe (never leaves machine)
+  - model_name: "aethera-local-fast"
+    litellm_params:
+      model: "ollama/qwen3.5:4b"
+      api_base: "http://ollama:11434"
+      stream: true
+      timeout: 30s
+    model_info:
+      description: "Fast local model on MX450 GPU — primary for PHI and simple queries"
+      mode: "chat"
+      usage_level: "L1-light"
+
+  # gemma4:e2b — GPU-accelerated on MX450 (~1.5GB VRAM)
+  # Good for tool calling, structured output, vision tasks
+  - model_name: "aethera-local-tools"
+    litellm_params:
+      model: "ollama/gemma4:e2b"
+      api_base: "http://ollama:11434"
+      stream: true
+      timeout: 30s
+    model_info:
+      description: "Local tool-calling model on MX450 GPU — structured output + vision"
+      mode: "chat"
+      usage_level: "L1-light"
+
+  # qwen3.5:9b — CPU-only (~5.5GB RAM)
+  # Smart fallback when cloud quota exhausted, always available
+  - model_name: "aethera-local-smart"
+    litellm_params:
+      model: "ollama/qwen3.5:9b"
+      api_base: "http://ollama:11434"
+      stream: true
+      timeout: 60s
+    model_info:
+      description: "Smart local model on CPU — fallback when cloud quota exhausted"
+      mode: "chat"
+      usage_level: "L1-light"
+
+  # nomic-embed-text — CPU-only (~300MB RAM)
+  # Embeddings for ChromaDB RAG indexing and semantic search
+  - model_name: "aethera-embed"
+    litellm_params:
+      model: "ollama/nomic-embed-text"
+      api_base: "http://ollama:11434"
+    model_info:
+      description: "Local embedding model for RAG — nomic-embed-text"
+      mode: "embedding"
+      usage_level: "L1-light"
+
+  # ==========================================================================
+  # OLLAMA CLOUD MODELS — User's Ollama account (Pro plan $20/mo)
+  # Run on Ollama's cloud GPUs, zero local resource usage
+  # API key from: ollama.com → Settings → API Keys
+  # ==========================================================================
+
+  # qwen3.5:122b — Primary brain, frontier intelligence
+  # Best for: complex healthcare, reasoning, analysis, multi-step tasks
+  - model_name: "aethera-cloud-brain"
+    litellm_params:
+      model: "ollama/qwen3.5:122b"
+      api_base: "https://ollama.com"
+      api_key: "os.environ/OLLAMA_API_KEY"
+      stream: true
+      timeout: 120s
+    model_info:
+      description: "Frontier 122B model — best for complex healthcare, reasoning, analysis"
+      mode: "chat"
+      usage_level: "L3-heavy"
+
+  # deepseek-v4-flash — 284B MoE (13B active), 1M context
+  # Best for: deep reasoning, long documents, chain-of-thought analysis
+  - model_name: "aethera-cloud-reason"
+    litellm_params:
+      model: "ollama/deepseek-v4-flash"
+      api_base: "https://ollama.com"
+      api_key: "os.environ/OLLAMA_API_KEY"
+      stream: true
+      timeout: 180s
+    model_info:
+      description: "284B MoE reasoning model — best for deep analysis, 1M context"
+      mode: "chat"
+      usage_level: "L2-medium"
+
+  # kimi-k2.6 — Best coder, multimodal agentic
+  # Best for: code generation, debugging, agentic coding tasks
+  - model_name: "aethera-cloud-coder"
+    litellm_params:
+      model: "ollama/kimi-k2.6"
+      api_base: "https://ollama.com"
+      api_key: "os.environ/OLLAMA_API_KEY"
+      stream: true
+      timeout: 120s
+    model_info:
+      description: "Best coding model — agentic, multimodal, MIT licensed"
+      mode: "chat"
+      usage_level: "L3-heavy"
+
+  # gemma4:26b — Tool calling + vision + reasoning
+  # Best for: document analysis, structured data extraction, vision tasks
+  - model_name: "aethera-cloud-tools"
+    litellm_params:
+      model: "ollama/gemma4:26b"
+      api_base: "https://ollama.com"
+      api_key: "os.environ/OLLAMA_API_KEY"
+      stream: true
+      timeout: 90s
+    model_info:
+      description: "Tool calling + vision model — best for document analysis, structured output"
+      mode: "chat"
+      usage_level: "L2-medium"
+
+  # nemotron-3-super — 120B MoE (12B active), efficient multi-agent
+  # Best for: multi-agent parallel reasoning, efficient delegation
+  - model_name: "aethera-cloud-agent"
+    litellm_params:
+      model: "ollama/nemotron-3-super"
+      api_base: "https://ollama.com"
+      api_key: "os.environ/OLLAMA_API_KEY"
+      stream: true
+      timeout: 90s
+    model_info:
+      description: "Efficient MoE model — best for multi-agent parallel reasoning"
+      mode: "chat"
+      usage_level: "L2-medium"
+
+  # qwen3.5:35b — Balanced speed/intelligence
+  # Best for: everyday queries, medium-complexity tasks
+  - model_name: "aethera-cloud-balanced"
+    litellm_params:
+      model: "ollama/qwen3.5:35b"
+      api_base: "https://ollama.com"
+      api_key: "os.environ/OLLAMA_API_KEY"
+      stream: true
+      timeout: 60s
+    model_info:
+      description: "Balanced cloud model — good mix of speed and intelligence"
+      mode: "chat"
+      usage_level: "L2-medium"
+
+  # glm-5.1 — Agentic engineering
+  # Best for: systems design, coding, engineering tasks
+  - model_name: "aethera-cloud-engineer"
+    litellm_params:
+      model: "ollama/glm-5.1"
+      api_base: "https://ollama.com"
+      api_key: "os.environ/OLLAMA_API_KEY"
+      stream: true
+      timeout: 90s
+    model_info:
+      description: "Agentic engineering model — strong coding and systems design"
+      mode: "chat"
+      usage_level: "L3-heavy"
+
+  # ==========================================================================
+  # HUGGINGFACE FREE INFERENCE — Overflow when Ollama Cloud quota is hit
+  # Optional: set HF_TOKEN in .env for higher rate limits (free account)
+  # ==========================================================================
+
+  - model_name: "hf-qwen-72b"
+    litellm_params:
+      model: "huggingface/Qwen/Qwen2.5-72B-Instruct"
+      api_key: "os.environ/HF_TOKEN"
+      stream: true
+      timeout: 60s
+    model_info:
+      description: "HuggingFace free Qwen 72B — overflow capacity"
+      mode: "chat"
+      usage_level: "L1-light"
+
+  - model_name: "hf-mistral"
+    litellm_params:
+      model: "huggingface/mistralai/Mistral-7B-Instruct-v0.3"
+      api_key: "os.environ/HF_TOKEN"
+      stream: true
+      timeout: 30s
+    model_info:
+      description: "HuggingFace free Mistral 7B — fast overflow"
+      mode: "chat"
+      usage_level: "L1-light"
+
+  # ==========================================================================
+  # CUSTOM ENDPOINT — User-configurable OpenAI-compatible endpoint
+  # Set CUSTOM_API_BASE, CUSTOM_MODEL_NAME, CUSTOM_API_KEY in .env
+  # Examples: Groq, Cerebras, SambaNova, local Ollama on another machine
+  # NOTE: LiteLLM requires the model name to be known at config load time.
+  # If CUSTOM_MODEL_NAME is empty, this entry is skipped automatically.
+  # To activate, set all three CUSTOM_ variables in .env, then restart litellm.
+  # ==========================================================================
+  - model_name: "custom-endpoint"
+    litellm_params:
+      model: "openai/custom"
+      api_base: "os.environ/CUSTOM_API_BASE"
+      api_key: "os.environ/CUSTOM_API_KEY"
+      stream: true
+      timeout: 60s
+    model_info:
+      description: "User-configured custom endpoint — set CUSTOM_ vars in .env"
+      mode: "chat"
+      usage_level: "L1-light"
+
+# =============================================================================
+# ROUTER SETTINGS — Intelligent routing with fallbacks and rate limit tracking
+# =============================================================================
+router_settings:
+  routing_strategy: "usage-based-routing-v2"
+
+  enable_pre_call_checks: true
+
+  redis_host: "redis"
+  redis_port: 6379
+
+  # Fallback order: primary → secondary → tertiary → local-last-resort
+  # Each primary model falls back through increasingly available models
+  fallbacks:
+    - "aethera-cloud-brain": ["aethera-cloud-balanced", "aethera-cloud-reason", "hf-qwen-72b", "aethera-local-smart"]
+    - "aethera-cloud-coder": ["aethera-cloud-engineer", "hf-qwen-72b", "aethera-local-smart"]
+    - "aethera-cloud-tools": ["aethera-cloud-balanced", "aethera-local-tools", "aethera-local-smart"]
+    - "aethera-cloud-reason": ["aethera-cloud-brain", "hf-qwen-72b", "aethera-local-smart"]
+    - "aethera-cloud-agent": ["aethera-cloud-balanced", "aethera-cloud-tools", "aethera-local-smart"]
+    - "aethera-cloud-engineer": ["aethera-cloud-coder", "aethera-cloud-balanced", "aethera-local-smart"]
+    - "aethera-cloud-balanced": ["hf-qwen-72b", "aethera-local-tools", "aethera-local-smart"]
+    - "aethera-local-fast": ["aethera-local-tools", "aethera-local-smart"]
+    - "aethera-local-tools": ["aethera-local-fast", "aethera-local-smart"]
+    - "aethera-local-smart": ["hf-qwen-72b", "hf-mistral"]
+    - "hf-qwen-72b": ["hf-mistral", "aethera-local-smart"]
+    - "hf-mistral": ["aethera-local-smart"]
+
+  set_verbose: true
+  track_cost: true
+
+# =============================================================================
+# GENERAL SETTINGS
+# =============================================================================
+general_settings:
+  enable_logger: true
+
+  cache: true
+  cache_params:
+    host: "redis"
+    port: 6379
+    ttl: 3600
+
+  num_retries: 3
+  retry_after: 5

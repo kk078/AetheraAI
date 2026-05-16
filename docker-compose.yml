@@ -1,0 +1,312 @@
+# =============================================================================
+# AETHERA AI — Docker Compose
+# 8 services: orchestrator, litellm, ollama, chromadb, searxng, redis, ui, voice
+# Optimized for: i5-11320H, 16GB RAM, NVIDIA MX450 2GB VRAM, WSL2 backend
+# Total container RAM budget: ~10.5GB (leaving ~5.5GB for Windows + WSL2)
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # ORCHESTRATOR — FastAPI brain: routing, PHI detection, cascade, tools
+  # ===========================================================================
+  orchestrator:
+    build:
+      context: ./orchestrator
+      dockerfile: Dockerfile
+    container_name: aethera-orchestrator
+    ports:
+      - "8000:8000"
+    environment:
+      # --- Internal service URLs (Docker network) ---
+      LITELLM_URL: http://litellm:4000
+      CHROMADB_URL: http://chromadb:8000
+      SEARXNG_URL: http://searxng:8080
+      OLLAMA_URL: http://ollama:11434
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: sqlite+aiosqlite:///data/aethera.db
+      ENCRYPTED_DB_PATH: /data/aethera_encrypted.db
+      # --- Secrets (from .env) ---
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+      HF_TOKEN: ${HF_TOKEN:-}
+      # --- Integrations (from .env) ---
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      IMAP_SERVER: ${IMAP_SERVER:-}
+      IMAP_PORT: ${IMAP_PORT:-993}
+      IMAP_USER: ${IMAP_USER:-}
+      IMAP_PASS: ${IMAP_PASS:-}
+      IMAP_USE_SSL: ${IMAP_USE_SSL:-true}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      CALDAV_URL: ${CALDAV_URL:-}
+      CALDAV_USERNAME: ${CALDAV_USERNAME:-}
+      CALDAV_PASSWORD: ${CALDAV_PASSWORD:-}
+      # --- Custom LLM endpoint (from .env) ---
+      CUSTOM_API_BASE: ${CUSTOM_API_BASE:-}
+      CUSTOM_MODEL_NAME: ${CUSTOM_MODEL_NAME:-}
+      CUSTOM_API_KEY: ${CUSTOM_API_KEY:-}
+      # --- Preferences (from .env) ---
+      DEFAULT_SPECIALIST: ${DEFAULT_SPECIALIST:-general}
+      PREFERRED_MODEL: ${PREFERRED_MODEL:-}
+      USER_LOCATION: ${USER_LOCATION:-}
+      USER_TIMEZONE: ${USER_TIMEZONE:-America/New_York}
+      PHI_DETECTION_ENABLED: ${PHI_DETECTION_ENABLED:-true}
+      AUDIT_LOGGING_ENABLED: ${AUDIT_LOGGING_ENABLED:-true}
+      MULTI_AGENT_ENABLED: ${MULTI_AGENT_ENABLED:-true}
+      PROACTIVE_ENABLED: ${PROACTIVE_ENABLED:-true}
+      VOICE_ENABLED: ${VOICE_ENABLED:-true}
+      CLIPBOARD_ENABLED: ${CLIPBOARD_ENABLED:-true}
+      DEBUG: ${DEBUG:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      METRICS_ENABLED: ${METRICS_ENABLED:-false}
+      RATE_LIMIT: ${RATE_LIMIT:-60}
+      SESSION_TIMEOUT: ${SESSION_TIMEOUT:-120}
+      MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-50}
+    volumes:
+      - ./specialists:/app/specialists:ro
+      - ./skills:/app/skills:ro
+      - ./plugins:/app/plugins:ro
+      - ./connectors:/app/connectors:ro
+      - ./tools:/app/tools:ro
+      - ./memory:/app/memory:ro
+      - ./knowledge_bases:/app/knowledge_bases:ro
+      - ./proactive:/app/proactive:ro
+      - ./orchestrator/config.yaml:/app/config.yaml:ro
+      - aethera-data:/data
+    depends_on:
+      litellm:
+        condition: service_healthy
+      chromadb:
+        condition: service_healthy
+      searxng:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  # ===========================================================================
+  # LITELLM PROXY — Unifies all LLM providers behind one OpenAI-compatible API
+  # Routes: Ollama Cloud → HuggingFace → Ollama Local, with fallbacks
+  # ===========================================================================
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: aethera-litellm
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--host", "0.0.0.0"]
+    environment:
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+      HF_TOKEN: ${HF_TOKEN:-}
+      CUSTOM_API_BASE: ${CUSTOM_API_BASE:-}
+      CUSTOM_MODEL_NAME: ${CUSTOM_MODEL_NAME:-}
+      CUSTOM_API_KEY: ${CUSTOM_API_KEY:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: always
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ===========================================================================
+  # OLLAMA — Local model inference (GPU models on MX450, CPU models in RAM)
+  # Models: qwen3.5:4b (GPU), gemma4:e2b (GPU), qwen3.5:9b (CPU), nomic-embed-text (CPU)
+  # GPU passthrough is configured in docker-compose.override.yml
+  # ===========================================================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: aethera-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: always
+    healthcheck:
+      test: ["CMD", "/bin/ollama", "list"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+
+  # ===========================================================================
+  # CHROMADB — Vector database for RAG knowledge retrieval
+  # Stores embeddings of healthcare codes, regulations, user documents
+  # ===========================================================================
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: aethera-chromadb
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma-data:/chroma/chroma
+    environment:
+      ANONYMIZED_TELEMETRY: "False"
+      CHROMA_SERVER_AUTH_PROVIDER: "chromadb.auth.token.TokenAuthServerProvider"
+      CHROMA_SERVER_AUTH_CREDENTIALS: ${ENCRYPTION_KEY:-aethera-default-chroma-key}
+    restart: always
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/heartbeat')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # ===========================================================================
+  # SEARXNG — Privacy-respecting metasearch engine
+  # Aggregates Google, Bing, DuckDuckGo, PubMed, arXiv, and more
+  # ===========================================================================
+  searxng:
+    image: searxng/searxng:latest
+    container_name: aethera-searxng
+    ports:
+      - "8888:8080"
+    volumes:
+      - ./searxng-settings.yml:/etc/searxng/settings.yml:ro
+      - searxng-data:/data
+    environment:
+      SEARXNG_BASE_URL: http://localhost:8080/
+      SEARXNG_SECRET: ${ENCRYPTION_KEY:-aethera-searxng-secret}
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ===========================================================================
+  # REDIS — Caching, rate-limit tracking, session management, LiteLLM usage
+  # ===========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: aethera-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 200mb --maxmemory-policy allkeys-lru
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # ===========================================================================
+  # UI — React PWA frontend served via Nginx
+  # Dark/light mode, specialist badges, healthcare widgets, offline support
+  # ===========================================================================
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    container_name: aethera-ui
+    ports:
+      - "3000:80"
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+      VITE_WS_URL: ${VITE_WS_URL:-ws://localhost:8000/ws}
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  # ===========================================================================
+  # VOICE — STT (Whisper) and TTS (Piper) subsystem
+  # Whisper-small for speech-to-text, Piper for text-to-speech
+  # ===========================================================================
+  voice:
+    build:
+      context: ./voice
+      dockerfile: Dockerfile
+    container_name: aethera-voice
+    ports:
+      - "8500:8500"
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      ORCHESTRATOR_URL: http://orchestrator:8000
+      VOICE_ENABLED: ${VOICE_ENABLED:-true}
+    volumes:
+      - voice-models:/models
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8500/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+# =============================================================================
+# PERSISTENT VOLUMES
+# =============================================================================
+volumes:
+  aethera-data:
+    driver: local
+  ollama-models:
+    driver: local
+  chroma-data:
+    driver: local
+  redis-data:
+    driver: local
+  searxng-data:
+    driver: local
+  voice-models:
+    driver: local
+
+# =============================================================================
+# NETWORK — All services on one bridge network
+# =============================================================================
+networks:
+  default:
+    name: aethera-network
+    driver: bridge

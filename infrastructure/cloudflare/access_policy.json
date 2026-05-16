@@ -1,0 +1,53 @@
+{
+  "policy_name": "Aethera AI - Email OTP Authentication",
+  "description": "Zero-trust access policy requiring email OTP verification for all Aethera services. Users must verify their email address via a one-time passcode before accessing the application.",
+  "decision": "allow",
+  "session_duration": "24h",
+  "precedence": 1,
+  "include": [
+    {
+      "type": "email_domain",
+      "value": "{{DOMAIN}}"
+    }
+  ],
+  "require": [],
+  "exclude": [],
+  "applications": [
+    {
+      "name": "Aethera AI - UI",
+      "domain": "aethera.{{DOMAIN}}",
+      "type": "self_hosted",
+      "session_duration": "24h",
+      "auto_redirect_to_identity": true
+    },
+    {
+      "name": "Aethera AI - API",
+      "domain": "api.{{DOMAIN}}",
+      "type": "self_hosted",
+      "session_duration": "24h",
+      "auto_redirect_to_identity": true
+    }
+  ],
+  "authentication_methods": [
+    {
+      "type": "email",
+      "name": "Email OTP",
+      "config": {
+        "otp_length": 6,
+        "otp_expiry_minutes": 10
+      }
+    }
+  ],
+  "allowed_emails": [],
+  "allowed_email_domains": ["{{DOMAIN}}"],
+  "ip_whitelist": [],
+  "geo_restrictions": {
+    "enabled": false,
+    "allowed_countries": []
+  },
+  "device_posture": {
+    "require_managed_device": false,
+    "require_screen_lock": false,
+    "require_disk_encryption": false
+  }
+}

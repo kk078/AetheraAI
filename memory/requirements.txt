@@ -1,0 +1,20 @@
+# Aethera AI Memory Module Dependencies
+
+# Vector database for RAG embeddings
+chromadb>=0.4.22,<1.0.0
+
+# SQLCipher for encrypted health records (optional - graceful fallback)
+pysqlcipher3>=1.2.0; sys_platform != "win32"
+
+# Encryption and security
+cryptography>=41.0.0
+pydantic>=2.5.0
+
+# HTTP client for ChromaDB communication
+httpx>=0.25.0
+
+# SQLite is part of Python stdlib - no install needed
+# sqlite3>=0.0  (stdlib)
+
+# JSON handling is part of Python stdlib - no install needed
+# json>=0.0  (stdlib)

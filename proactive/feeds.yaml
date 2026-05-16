@@ -1,0 +1,96 @@
+# =============================================================================
+# Aethera AI - RSS/Atom Feed Configuration
+# =============================================================================
+# Feeds are organized by category for automatic classification.
+# Each feed has a name and URL. Add or remove feeds as needed.
+# =============================================================================
+
+feeds:
+
+  # ---------------------------------------------------------------------------
+  # Healthcare Regulatory
+  # ---------------------------------------------------------------------------
+  healthcare_regulatory:
+    - name: "CMS Newsroom"
+      url: "https://www.cms.gov/newsroom/rss"
+
+    - name: "Federal Register - CMS"
+      url: "https://www.federalregister.gov/agencies/centers-for-medicare-medicaid-services/rss"
+
+    - name: "OIG Reports"
+      url: "https://oig.hhs.gov/rss/oig-reports.xml"
+
+    - name: "HHS.gov News"
+      url: "https://www.hhs.gov/rss.xml"
+
+    - name: "FDA Safety Alerts"
+      url: "https://www.fda.gov/about-fda/contact-fda/rss-feeds/safety/rss.xml"
+
+    - name: "FDA News"
+      url: "https://www.fda.gov/about-fda/contact-fda/rss-feeds/fda-news/rss.xml"
+
+  # ---------------------------------------------------------------------------
+  # Healthcare Payment & Operations
+  # ---------------------------------------------------------------------------
+  healthcare_payment:
+    - name: "Becker's Healthcare"
+      url: "https://www.beckershospitalreview.com/rss.xml"
+
+    - name: "Health Affairs"
+      url: "https://www.healthaffairs.org/rss/feed"
+
+    - name: "Modern Healthcare"
+      url: "https://www.modernhealthcare.com/rss"
+
+    - name: "AMA News"
+      url: "https://www.ama-assn.org/rss/ama-news"
+
+    - name: "Healthcare Dive"
+      url: "https://www.healthcaredive.com/rss/news"
+
+    - name: "Revenue Cycle Dive"
+      url: "https://www.revenuecycledive.com/rss/news"
+
+  # ---------------------------------------------------------------------------
+  # Technology
+  # ---------------------------------------------------------------------------
+  technology:
+    - name: "Hacker News"
+      url: "https://hnrss.org/frontpage"
+
+    - name: "Cloudflare Blog"
+      url: "https://blog.cloudflare.com/rss/"
+
+    - name: "GitHub Blog"
+      url: "https://github.blog/feed/"
+
+    - name: "TechCrunch AI"
+      url: "https://techcrunch.com/category/artificial-intelligence/feed/"
+
+    - name: "The Verge"
+      url: "https://www.theverge.com/rss/index.xml"
+
+    - name: "Ars Technica"
+      url: "https://feeds.arstechnica.com/arstechnica/index"
+
+  # ---------------------------------------------------------------------------
+  # Security
+  # ---------------------------------------------------------------------------
+  security:
+    - name: "NVD CVE Feed"
+      url: "https://nvd.nist.gov/vuln/data-feeds/rss.xml"
+
+    - name: "CISA Alerts"
+      url: "https://www.cisa.gov/news-events/cybersecurity-advisories/rss.xml"
+
+    - name: "Krebs on Security"
+      url: "https://krebsonsecurity.com/feed/"
+
+    - name: "BleepingComputer"
+      url: "https://www.bleepingcomputer.com/feed/"
+
+    - name: "The Hacker News"
+      url: "https://feeds.feedburner.com/TheHackersNews"
+
+    - name: "SANS ISC"
+      url: "https://isc.sans.edu/rssfeed.xml"

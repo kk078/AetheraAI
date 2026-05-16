@@ -1,0 +1,836 @@
+# =============================================================================
+# AETHERA AI - ORCHESTRATOR CONFIGURATION
+# =============================================================================
+# Central configuration for specialists, models, tools, and routing
+# =============================================================================
+
+# =============================================================================
+# SPECIALIST CONFIGURATION
+# =============================================================================
+specialists:
+  # Healthcare Specialists
+  healthcare_provider:
+    enabled: true
+    priority: 1
+    description: "Revenue cycle, coding, CDI, billing, claims, denials"
+    color: "#06B6D4"
+    default_model: "aethera-cloud-brain"
+    keywords:
+      - "coding"
+      - "ICD"
+      - "CPT"
+      - "HCPCS"
+      - "DRG"
+      - "APC"
+      - "claim"
+      - "denial"
+      - "appeal"
+      - "billing"
+      - "reimbursement"
+      - "CDM"
+      - "charge capture"
+      - "NCCI"
+      - "MUE"
+      - "fee schedule"
+      - "prior auth"
+      - "medical necessity"
+    tools:
+      - code_lookup
+      - cci_editor
+      - fee_schedule
+      - coverage_checker
+      - denial_analyzer
+      - denial_predictor
+      - appeals_writer
+      - drg_grouper
+      - apc_grouper
+      - edi_parser
+      - npi_lookup
+      - prior_auth
+      - medical_calculator
+
+  healthcare_payer:
+    enabled: true
+    priority: 1
+    description: "Claims adjudication, UM, network management, compliance"
+    color: "#8B5CF6"
+    default_model: "aethera-cloud-brain"
+    keywords:
+      - "adjudication"
+      - "utilization management"
+      - "prior authorization"
+      - "network"
+      - "payer"
+      - "insurance"
+      - "Medicare Advantage"
+      - "Medicaid"
+      - "Star Ratings"
+      - "HEDIS"
+      - "risk adjustment"
+      - "RAF"
+      - "HCC"
+      - "MLR"
+      - "PMPM"
+      - "COB"
+      - "subrogation"
+    tools:
+      - remittance_parser
+      - claim_status
+      - eligibility_checker
+      - contract_analyzer
+      - risk_adjuster
+      - quality_tracker
+      - ndc_pricer
+      - denial_analyzer
+
+  healthcare_regulatory:
+    enabled: true
+    priority: 1
+    description: "CMS regulations, HIPAA, OIG, fraud and abuse"
+    color: "#F43F5E"
+    default_model: "aethera-cloud-brain"
+    keywords:
+      - "regulation"
+      - "compliance"
+      - "HIPAA"
+      - "Stark"
+      - "Anti-Kickback"
+      - "False Claims"
+      - "OIG"
+      - "CMS manual"
+      - "transmittal"
+      - "final rule"
+      - "No Surprises Act"
+      - "price transparency"
+      - "information blocking"
+      - "EMTALA"
+    tools:
+      - compliance_checker
+      - coverage_checker
+      - web_researcher
+      - document_creator
+
+  healthcare_clinical:
+    enabled: true
+    priority: 1
+    description: "Clinical knowledge, drug info, labs, guidelines"
+    color: "#10B981"
+    default_model: "aethera-cloud-brain"
+    keywords:
+      - "clinical"
+      - "drug"
+      - "medication"
+      - "interaction"
+      - "lab"
+      - "laboratory"
+      - "guideline"
+      - "screening"
+      - "diagnosis"
+      - "treatment"
+      - "pathophysiology"
+      - "anatomy"
+    tools:
+      - drug_reference
+      - lab_interpreter
+      - medical_calculator
+      - code_lookup
+      - screening_guidelines
+
+  healthcare_analytics:
+    enabled: true
+    priority: 2
+    description: "HEDIS, Stars, PMPM, MLR, risk adjustment analytics"
+    color: "#F59E0B"
+    default_model: "aethera-cloud-reason"
+    keywords:
+      - "analytics"
+      - "HEDIS"
+      - "Stars"
+      - "MIPS"
+      - "PMPM"
+      - "MLR"
+      - "trend"
+      - "forecast"
+      - "dashboard"
+      - "report"
+      - "population health"
+      - "risk stratification"
+    tools:
+      - risk_adjuster
+      - quality_tracker
+      - calculator
+      - data_visualizer
+      - spreadsheet_analyzer
+
+  healthcare_it:
+    enabled: true
+    priority: 2
+    description: "EHR, HL7, FHIR, interoperability, EDI"
+    color: "#3B82F6"
+    default_model: "aethera-cloud-tools"
+    keywords:
+      - "HL7"
+      - "FHIR"
+      - "EDI"
+      - "837"
+      - "835"
+      - "270"
+      - "271"
+      - "EHR"
+      - "interoperability"
+      - "interface"
+      - "integration"
+      - "X12"
+      - "NCPDP"
+    tools:
+      - edi_parser
+      - fhir_client
+      - code_lookup
+      - code_executor
+
+  healthcare_pharmacy:
+    enabled: true
+    priority: 2
+    description: "PBM, formulary, drug pricing, 340B"
+    color: "#EC4899"
+    default_model: "aethera-cloud-balanced"
+    keywords:
+      - "pharmacy"
+      - "PBM"
+      - "formulary"
+      - "340B"
+      - "drug pricing"
+      - "ASP"
+      - "AWP"
+      - "NADAC"
+      - "MAC"
+      - "specialty"
+      - "biosimilar"
+      - "Part D"
+    tools:
+      - drug_reference
+      - ndc_pricer
+      - code_lookup
+
+  healthcare_behavioral:
+    enabled: true
+    priority: 2
+    description: "Mental health, SUD, telehealth, parity"
+    color: "#A855F7"
+    default_model: "aethera-cloud-balanced"
+    keywords:
+      - "behavioral"
+      - "mental health"
+      - "substance use"
+      - "SUD"
+      - "psychiatry"
+      - "psychology"
+      - "therapy"
+      - "counseling"
+      - "parity"
+      - "MHPAEA"
+    tools:
+      - code_lookup
+      - coverage_checker
+      - prior_auth
+
+  healthcare_dental_vision:
+    enabled: true
+    priority: 3
+    description: "Dental and vision benefits, CDT codes"
+    color: "#14B8A6"
+    default_model: "aethera-cloud-balanced"
+    keywords:
+      - "dental"
+      - "vision"
+      - "optometry"
+      - "CDT"
+      - "D code"
+      - "orthodontia"
+      - "endodontics"
+      - "periodontics"
+    tools:
+      - code_lookup
+      - fee_schedule
+
+  healthcare_workers_comp:
+    enabled: true
+    priority: 3
+    description: "Workers' comp billing, state rules, IME"
+    color: "#F97316"
+    default_model: "aethera-cloud-balanced"
+    keywords:
+      - "workers comp"
+      - "workman's comp"
+      - "workers' compensation"
+      - "IME"
+      - "impairment"
+      - "MMI"
+      - "MSA"
+      - "set-aside"
+    tools:
+      - code_lookup
+      - fee_schedule
+      - medical_calculator
+
+  # Non-Healthcare Specialists
+  finance:
+    enabled: true
+    priority: 2
+    description: "Accounting, tax, invoicing, projections"
+    color: "#22C55E"
+    default_model: "aethera-cloud-balanced"
+    keywords:
+      - "finance"
+      - "accounting"
+      - "tax"
+      - "invoice"
+      - "budget"
+      - "projection"
+      - "revenue"
+      - "expense"
+      - "P&L"
+      - "balance sheet"
+      - "cash flow"
+    tools:
+      - calculator
+      - spreadsheet_analyzer
+      - document_creator
+
+  legal:
+    enabled: true
+    priority: 2
+    description: "Contracts, IP, compliance, privacy"
+    color: "#EF4444"
+    default_model: "aethera-cloud-brain"
+    keywords:
+      - "legal"
+      - "contract"
+      - "agreement"
+      - "IP"
+      - "copyright"
+      - "trademark"
+      - "patent"
+      - "privacy"
+      - "GDPR"
+      - "CCPA"
+      - "litigation"
+    tools:
+      - document_creator
+      - web_researcher
+      - summarizer
+
+  software_engineering:
+    enabled: true
+    priority: 2
+    description: "Full-stack dev, DevOps, architecture"
+    color: "#6366F1"
+    default_model: "aethera-cloud-coder"
+    keywords:
+      - "code"
+      - "programming"
+      - "software"
+      - "architecture"
+      - "API"
+      - "database"
+      - "DevOps"
+      - "deployment"
+      - "debug"
+      - "refactor"
+      - "test"
+    tools:
+      - code_executor
+      - document_creator
+      - web_researcher
+
+  media_marketing:
+    enabled: true
+    priority: 3
+    description: "Content, SEO, ASO, social, branding"
+    color: "#F43F5E"
+    default_model: "aethera-cloud-balanced"
+    keywords:
+      - "marketing"
+      - "SEO"
+      - "ASO"
+      - "social media"
+      - "content"
+      - "branding"
+      - "campaign"
+      - "email marketing"
+    tools:
+      - document_creator
+      - web_researcher
+      - summarizer
+
+  research:
+    enabled: true
+    priority: 2
+    description: "Deep research, literature review"
+    color: "#14B8A6"
+    default_model: "aethera-cloud-reason"
+    keywords:
+      - "research"
+      - "literature"
+      - "study"
+      - "evidence"
+      - "systematic review"
+      - "meta-analysis"
+      - "clinical trial"
+    tools:
+      - web_researcher
+      - summarizer
+      - document_creator
+
+  personal_assistant:
+    enabled: true
+    priority: 3
+    description: "Calendar, tasks, travel, life management"
+    color: "#A855F7"
+    default_model: "aethera-local-fast"
+    keywords:
+      - "calendar"
+      - "schedule"
+      - "meeting"
+      - "task"
+      - "reminder"
+      - "travel"
+      - "flight"
+      - "hotel"
+      - "restaurant"
+    tools:
+      - calculator
+      - web_researcher
+      - summarizer
+
+  cloudflare_ops:
+    enabled: true
+    priority: 2
+    description: "Cloudflare infrastructure management"
+    color: "#F97316"
+    default_model: "aethera-cloud-tools"
+    keywords:
+      - "cloudflare"
+      - "DNS"
+      - "tunnel"
+      - "worker"
+      - "pages"
+      - "R2"
+      - "Access"
+      - "WAF"
+      - "CDN"
+    tools:
+      - cloudflare_dns
+      - cloudflare_tunnel
+      - cloudflare_workers
+      - cloudflare_pages
+      - cloudflare_r2
+
+  data_analytics:
+    enabled: true
+    priority: 2
+    description: "Data science, visualization, reporting"
+    color: "#0EA5E9"
+    default_model: "aethera-cloud-reason"
+    keywords:
+      - "data"
+      - "analytics"
+      - "visualization"
+      - "chart"
+      - "graph"
+      - "dashboard"
+      - "report"
+      - "statistics"
+    tools:
+      - data_visualizer
+      - spreadsheet_analyzer
+      - calculator
+
+  general:
+    enabled: true
+    priority: 4
+    description: "Default fallback for ambiguous queries"
+    color: "#6B7280"
+    default_model: "aethera-cloud-balanced"
+    keywords: []
+    tools:
+      - web_researcher
+      - summarizer
+      - document_creator
+
+# =============================================================================
+# MODEL CONFIGURATION
+# =============================================================================
+models:
+  # Cloud models (Ollama Cloud)
+  aethera-cloud-brain:
+    provider: "ollama_cloud"
+    model: "qwen3.5:122b"
+    usage_level: "L3-heavy"
+    max_tokens: 32768
+    temperature: 0.7
+    timeout: 120
+
+  aethera-cloud-reason:
+    provider: "ollama_cloud"
+    model: "deepseek-v4-flash"
+    usage_level: "L2-medium"
+    max_tokens: 1048576
+    temperature: 0.5
+    timeout: 180
+
+  aethera-cloud-coder:
+    provider: "ollama_cloud"
+    model: "kimi-k2.6"
+    usage_level: "L3-heavy"
+    max_tokens: 32768
+    temperature: 0.7
+    timeout: 120
+
+  aethera-cloud-tools:
+    provider: "ollama_cloud"
+    model: "gemma4:26b"
+    usage_level: "L2-medium"
+    max_tokens: 32768
+    temperature: 0.7
+    timeout: 90
+
+  aethera-cloud-agent:
+    provider: "ollama_cloud"
+    model: "nemotron-3-super"
+    usage_level: "L2-medium"
+    max_tokens: 32768
+    temperature: 0.7
+    timeout: 90
+
+  aethera-cloud-balanced:
+    provider: "ollama_cloud"
+    model: "qwen3.5:35b"
+    usage_level: "L2-medium"
+    max_tokens: 32768
+    temperature: 0.7
+    timeout: 60
+
+  aethera-cloud-engineer:
+    provider: "ollama_cloud"
+    model: "glm-5.1"
+    usage_level: "L3-heavy"
+    max_tokens: 32768
+    temperature: 0.7
+    timeout: 90
+
+  # Local models (Ollama Local)
+  aethera-local-fast:
+    provider: "ollama_local"
+    model: "qwen3.5:4b"
+    usage_level: "L1-light"
+    max_tokens: 8192
+    temperature: 0.7
+    timeout: 30
+
+  aethera-local-tools:
+    provider: "ollama_local"
+    model: "gemma4:e2b"
+    usage_level: "L1-light"
+    max_tokens: 8192
+    temperature: 0.7
+    timeout: 30
+
+  aethera-local-smart:
+    provider: "ollama_local"
+    model: "qwen3.5:9b"
+    usage_level: "L1-light"
+    max_tokens: 16384
+    temperature: 0.7
+    timeout: 60
+
+  aethera-embed:
+    provider: "ollama_local"
+    model: "nomic-embed-text"
+    usage_level: "L1-light"
+    embedding_dim: 768
+
+  # HuggingFace overflow
+  hf-qwen-72b:
+    provider: "huggingface"
+    model: "Qwen/Qwen2.5-72B-Instruct"
+    usage_level: "L1-light"
+    max_tokens: 32768
+    timeout: 60
+
+  hf-mistral:
+    provider: "huggingface"
+    model: "mistralai/Mistral-7B-Instruct-v0.3"
+    usage_level: "L1-light"
+    max_tokens: 8192
+    timeout: 30
+
+# =============================================================================
+# TOOL CONFIGURATION
+# =============================================================================
+tools:
+  # Healthcare tools
+  code_lookup:
+    enabled: true
+    category: "healthcare"
+    description: "Look up ICD-10, CPT, HCPCS, CDT, revenue codes"
+
+  cci_editor:
+    enabled: true
+    category: "healthcare"
+    description: "Check NCCI edit pairs and modifier requirements"
+
+  fee_schedule:
+    enabled: true
+    category: "healthcare"
+    description: "Look up Medicare/Medicaid fee schedule amounts"
+
+  coverage_checker:
+    enabled: true
+    category: "healthcare"
+    description: "Check LCD/NCD medical necessity criteria"
+
+  denial_analyzer:
+    enabled: true
+    category: "healthcare"
+    description: "Analyze denial codes and recommend actions"
+
+  denial_predictor:
+    enabled: true
+    category: "healthcare"
+    description: "Pre-submission claim scrubbing with risk score"
+
+  appeals_writer:
+    enabled: true
+    category: "healthcare"
+    description: "Generate appeals letters with regulatory citations"
+
+  drg_grouper:
+    enabled: true
+    category: "healthcare"
+    description: "Determine DRG assignment and weight"
+
+  apc_grouper:
+    enabled: true
+    category: "healthcare"
+    description: "Determine APC assignment for outpatient"
+
+  edi_parser:
+    enabled: true
+    category: "healthcare"
+    description: "Parse X12 EDI transactions (837, 835, 270/271, etc.)"
+
+  npi_lookup:
+    enabled: true
+    category: "healthcare"
+    description: "NPI Registry lookup"
+
+  prior_auth:
+    enabled: true
+    category: "healthcare"
+    description: "Prior authorization requirements lookup"
+
+  medical_calculator:
+    enabled: true
+    category: "healthcare"
+    description: "Clinical calculators (BMI, eGFR, MELD, etc.)"
+
+  drug_reference:
+    enabled: true
+    category: "healthcare"
+    description: "Drug information, interactions, formulary"
+
+  lab_interpreter:
+    enabled: true
+    category: "healthcare"
+    description: "Lab value interpretation and reference ranges"
+
+  remittance_parser:
+    enabled: true
+    category: "healthcare"
+    description: "Parse ERA/835 remittance advice"
+
+  claim_status:
+    enabled: true
+    category: "healthcare"
+    description: "Interpret 276/277 claim status transactions"
+
+  eligibility_checker:
+    enabled: true
+    category: "healthcare"
+    description: "Benefits and eligibility interpretation"
+
+  contract_analyzer:
+    enabled: true
+    category: "healthcare"
+    description: "Payer contract terms extraction"
+
+  risk_adjuster:
+    enabled: true
+    category: "healthcare"
+    description: "HCC/RAF score calculation and gaps"
+
+  quality_tracker:
+    enabled: true
+    category: "healthcare"
+    description: "HEDIS/MIPS/Stars measure tracking"
+
+  ndc_pricer:
+    enabled: true
+    category: "healthcare"
+    description: "Drug pricing (ASP, AWP, NADAC, WAC)"
+
+  compliance_checker:
+    enabled: true
+    category: "healthcare"
+    description: "HIPAA/OIG/Stark/AKS compliance check"
+
+  fhir_client:
+    enabled: true
+    category: "healthcare"
+    description: "FHIR R4 API client"
+
+  # General tools
+  calculator:
+    enabled: true
+    category: "general"
+    description: "Math, financial, statistical calculations"
+
+  web_researcher:
+    enabled: true
+    category: "general"
+    description: "Multi-hop web search and summarization"
+
+  document_creator:
+    enabled: true
+    category: "general"
+    description: "Generate DOCX, PDF, XLSX, PPTX, MD"
+
+  spreadsheet_analyzer:
+    enabled: true
+    category: "general"
+    description: "Read/write/analyze spreadsheets"
+
+  data_visualizer:
+    enabled: true
+    category: "general"
+    description: "Charts, graphs, dashboards"
+
+  summarizer:
+    enabled: true
+    category: "general"
+    description: "Summarize documents, URLs, meetings"
+
+  code_executor:
+    enabled: true
+    category: "general"
+    description: "Sandboxed Python/Node/Bash execution"
+
+  # Cloudflare tools
+  cloudflare_dns:
+    enabled: true
+    category: "cloudflare"
+    description: "DNS record management"
+
+  cloudflare_tunnel:
+    enabled: true
+    category: "cloudflare"
+    description: "Cloudflare Tunnel management"
+
+  cloudflare_workers:
+    enabled: true
+    category: "cloudflare"
+    description: "Cloudflare Workers management"
+
+  cloudflare_pages:
+    enabled: true
+    category: "cloudflare"
+    description: "Cloudflare Pages deployment"
+
+  cloudflare_r2:
+    enabled: true
+    category: "cloudflare"
+    description: "R2 object storage operations"
+
+# =============================================================================
+# ROUTING CONFIGURATION
+# =============================================================================
+routing:
+  # Confidence threshold for multi-agent escalation
+  multi_agent_threshold: 0.7
+
+  # Default specialist if none matched
+  default_specialist: "general"
+
+  # Enable PHI/PII detection (force local routing)
+  phi_detection_enabled: true
+
+  # Enable usage-based routing with rate limit tracking
+  usage_based_routing: true
+
+  # Rate limit tracking (Redis-backed)
+  rate_limits:
+    ollama_cloud:
+      session_limit: 100  # Requests per 5-hour session
+      weekly_limit: 500   # Requests per week
+    huggingface:
+      daily_limit: 1000   # Requests per day
+
+# =============================================================================
+# MULTI-AGENT CONFIGURATION
+# =============================================================================
+multi_agent:
+  enabled: true
+  max_agents: 3
+  debate_rounds: 2
+  aggregation_method: "consensus"  # Options: consensus, majority, weighted
+
+# =============================================================================
+# TEMPORAL ENGINE CONFIGURATION
+# =============================================================================
+temporal:
+  enabled: true
+  default_deadline: "7d"
+  escalation_threshold: "24h"
+  check_interval: "1h"
+
+# =============================================================================
+# CONFIDENCE SCORING CONFIGURATION
+# =============================================================================
+confidence:
+  enabled: true
+  thresholds:
+    high: 0.8    # Green badge
+    medium: 0.5  # Yellow badge
+    low: 0.0     # Red badge
+
+# =============================================================================
+# AUDIT LOGGING CONFIGURATION
+# =============================================================================
+audit:
+  enabled: true
+  log_level: "INFO"
+  retention_days: 2555  # 7 years for HIPAA
+  export_format: "JSON"
+
+# =============================================================================
+# MEMORY CONFIGURATION
+# =============================================================================
+memory:
+  vector_store:
+    enabled: true
+    collection: "healthcare_knowledge"
+    top_k: 5
+    similarity_threshold: 0.7
+
+  conversation_store:
+    enabled: true
+    max_history: 100
+
+  user_profile:
+    enabled: true
+    encryption: true
+
+  knowledge_graph:
+    enabled: true
+    auto_extract_entities: true

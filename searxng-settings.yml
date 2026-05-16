@@ -1,0 +1,274 @@
+# =============================================================================
+# AETHERA AI — SEARXNG CONFIGURATION
+# =============================================================================
+# Privacy-respecting metasearch engine for web research.
+# Aggregates results from multiple sources while preserving privacy.
+#
+# Engines are grouped by domain: general, academic, healthcare, news,
+# code, documentation, images, video, files, government.
+#
+# Health endpoint: http://localhost:8888/healthz
+# Search endpoint:  http://localhost:8888/search?q=<query>&format=json
+# =============================================================================
+
+use_default_settings: true
+
+# =============================================================================
+# SERVER
+# =============================================================================
+server:
+  secret_key: "aethera-searxng-secret-key-change-in-production"
+  base_url: false
+  public: false
+  autocomplete: "google"
+  default_lang: "en"
+  safe_search: 1
+  default_theme: "simple"
+  infinite_scroll: true
+  results_on_page: 10
+  advanced_search: true
+
+# =============================================================================
+# SEARCH
+# =============================================================================
+search:
+  default_categories:
+    - general
+    - news
+    - science
+    - images
+  max_page: 5
+  remove_duplicate_urls: true
+  timeout: 5.0
+  query_deduplication: true
+
+# =============================================================================
+# ENGINES
+# =============================================================================
+engines:
+  # ===========================================================================
+  # GENERAL SEARCH ENGINES
+  # ===========================================================================
+  - name: google
+    engine: google
+    shortcut: g
+    use_mobile_ui: false
+
+  - name: bing
+    engine: bing
+    shortcut: b
+
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+
+  - name: startpage
+    engine: startpage
+    shortcut: sp
+
+  - name: qwant
+    engine: qwant
+    shortcut: qw
+
+  - name: mojeek
+    engine: mojeek
+    shortcut: mj
+
+  # ===========================================================================
+  # ACADEMIC & SCIENTIFIC — Critical for healthcare research
+  # ===========================================================================
+  - name: pubmed
+    engine: pubmed
+    shortcut: pm
+    categories: science
+    timeout: 10.0
+
+  - name: arxiv
+    engine: arxiv
+    shortcut: arx
+    categories: science
+
+  - name: google scholar
+    engine: google_scholar
+    shortcut: gs
+    categories: science
+
+  - name: semanticscholar
+    engine: semanticscholar
+    shortcut: sem
+    categories: science
+    timeout: 10.0
+
+  - name: base
+    engine: base
+    shortcut: base
+    categories: science
+
+  - name: crossref
+    engine: crossref
+    shortcut: cr
+    categories: science
+
+  # ===========================================================================
+  # HEALTHCARE-SPECIFIC
+  # ===========================================================================
+  - name: clinicaltrials
+    engine: json_engine
+    shortcut: ct
+    categories: science
+    search_url: "https://clinicaltrials.gov/api/v2/studies?query.term={query}&pageSize=10"
+    search_method: GET
+    results_parameter: studies
+    url_field: protocolSection.identificationModule.nctId
+    title_field: protocolSection.identificationModule.briefTitle
+    content_field: protocolSection.descriptionModule.briefSummary
+
+  - name: medical news today
+    engine: xpath
+    shortcut: mn
+    categories: news
+    search_url: "https://www.medicalnewstoday.com/search?q={query}"
+    results_xpath: //article
+    url_xpath: .//a/@href
+    title_xpath: .//h2//text()
+    content_xpath: .//p[1]
+
+  # ===========================================================================
+  # NEWS — Proactive news aggregation
+  # ===========================================================================
+  - name: google news
+    engine: google_news
+    shortcut: gn
+    categories: news
+
+  - name: bing news
+    engine: bing_news
+    shortcut: bn
+    categories: news
+
+  - name: duckduckgo news
+    engine: duckduckgo_news
+    shortcut: dn
+    categories: news
+
+  # ===========================================================================
+  # CODE & DEVELOPMENT — Software engineering specialist
+  # ===========================================================================
+  - name: github
+    engine: github
+    shortcut: gh
+    categories: it
+
+  - name: stackoverflow
+    engine: stackoverflow
+    shortcut: so
+    categories: it
+
+  - name: gitlab
+    engine: gitlab
+    shortcut: gl
+    categories: it
+
+  # ===========================================================================
+  # DOCUMENTATION
+  # ===========================================================================
+  - name: devdocs
+    engine: devdocs
+    shortcut: dd
+    categories: it
+
+  - name: mdn
+    engine: mdn
+    shortcut: mdn
+    categories: it
+
+  # ===========================================================================
+  # IMAGES — Visual search
+  # ===========================================================================
+  - name: google images
+    engine: google_images
+    shortcut: gi
+
+  - name: unsplash
+    engine: unsplash
+    shortcut: us
+    categories: images
+
+  - name: pixabay
+    engine: pixabay
+    shortcut: px
+    categories: images
+
+  # ===========================================================================
+  # VIDEO
+  # ===========================================================================
+  - name: youtube
+    engine: youtube
+    shortcut: yt
+
+  - name: vimeo
+    engine: vimeo
+    shortcut: vm
+
+  # ===========================================================================
+  # FILES & DATA
+  # ===========================================================================
+  - name: archive.org
+    engine: archiveorg
+    shortcut: ao
+
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: wp
+    base_url: "https://en.wikipedia.org/"
+    categories: general
+
+  - name: wikidata
+    engine: wikidata
+    shortcut: wd
+
+  - name: openstreetmap
+    engine: openstreetmap
+    shortcut: osm
+    categories: map
+
+  # ===========================================================================
+  # GOVERNMENT & REGULATORY — Healthcare compliance research
+  # ===========================================================================
+  - name: usa.gov
+    engine: xpath
+    shortcut: usag
+    categories: government
+    search_url: "https://www.usa.gov/search?q={query}"
+    results_xpath: //li[@class="search-result"]
+    url_xpath: .//a/@href
+    title_xpath: .//a/h3
+    content_xpath: .//p
+
+  - name: federal register
+    engine: json_engine
+    shortcut: fr
+    categories: government
+    search_url: "https://www.federalregister.gov/api/v1/documents.json?per_page=10&order=newest&conditions[term]={query}"
+    results_parameter: documents
+    url_field: html_url
+    title_field: title
+    content_field: abstract
+
+# =============================================================================
+# OUTBOUND PROXY (optional — for additional privacy)
+# =============================================================================
+# outproxy: "http://127.0.0.1:8080"
+
+# =============================================================================
+# RATE LIMITING
+# =============================================================================
+checker:
+  disabled: true
+
+# =============================================================================
+# LOGGING
+# =============================================================================
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

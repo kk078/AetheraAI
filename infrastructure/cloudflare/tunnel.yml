@@ -1,0 +1,46 @@
+# =============================================================================
+# Aethera AI - Cloudflare Tunnel Configuration
+# =============================================================================
+# Ingress rules mapping hostnames to Aethera services.
+# This file is used by cloudflared to route traffic through the tunnel.
+#
+# Replace placeholders before use:
+#   <TUNNEL_ID>     - Your tunnel UUID (from: cloudflared tunnel list)
+#   <CREDENTIALS>   - Path to tunnel credentials JSON file
+#   <DOMAIN>        - Your Cloudflare domain (e.g., example.com)
+# =============================================================================
+
+tunnel: <TUNNEL_ID>
+credentials-file: <CREDENTIALS>
+
+# =============================================================================
+# INGRESS RULES
+# =============================================================================
+# Each rule matches a hostname and routes to a local service.
+# The last rule must be a catch-all that returns 404.
+# =============================================================================
+
+ingress:
+  # -------------------------------------------------------------------------
+  # Aethera UI - React PWA Frontend
+  # Serves the main web interface at the root domain
+  # -------------------------------------------------------------------------
+  - hostname: aethera.<DOMAIN>
+    service: http://localhost:3000
+    originRequest:
+      noTLSVerify: true
+
+  # -------------------------------------------------------------------------
+  # Aethera API - FastAPI Orchestrator
+  # Backend API for chat, specialists, tools, memory
+  # -------------------------------------------------------------------------
+  - hostname: api.<DOMAIN>
+    service: http://localhost:8000
+    originRequest:
+      noTLSVerify: true
+
+  # -------------------------------------------------------------------------
+  # Catch-all: return 404 for unmatched requests
+  # Must always be the last ingress rule
+  # -------------------------------------------------------------------------
+  - service: http_status:404
