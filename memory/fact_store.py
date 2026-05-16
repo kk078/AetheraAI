@@ -448,6 +448,63 @@ class FactStore:
         self._conn.commit()
         return self._conn.total_changes > 0
 
+    def store_facts_batch(
+        self,
+        facts: List[Dict[str, Any]]
+    ) -> List[str]:
+        """
+        Store multiple facts in a single transaction.
+
+        Args:
+            facts: List of dicts with keys: fact_text, source, source_type,
+                   confidence, category, tags, expires_at
+
+        Returns:
+            List of fact IDs
+        """
+        fact_ids = []
+        now = datetime.now().isoformat()
+        try:
+            for f in facts:
+                fact_id = f"fact_{uuid.uuid4().hex[:12]}"
+                fact_ids.append(fact_id)
+                self._conn.execute(
+                    """INSERT INTO facts
+                       (id, fact_text, source, source_type, confidence, category,
+                        tags, status, created_at, updated_at, expires_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        fact_id,
+                        f.get("fact_text", ""),
+                        f.get("source", ""),
+                        f.get("source_type", "document"),
+                        max(0.0, min(1.0, f.get("confidence", 0.5))),
+                        f.get("category", "general"),
+                        json.dumps(f.get("tags") or []),
+                        "active",
+                        now,
+                        now,
+                        f.get("expires_at"),
+                    )
+                )
+                try:
+                    self._conn.execute(
+                        "INSERT INTO facts_fts (rowid, fact_text, category, tags, source) VALUES (?, ?, ?, ?, ?)",
+                        (
+                            int(fact_id.replace("fact_", ""), 16) % (2**63),
+                            f.get("fact_text", ""),
+                            f.get("category", "general"),
+                            " ".join(f.get("tags") or []),
+                            f.get("source", ""),
+                        )
+                    )
+                except Exception:
+                    pass
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+        return fact_ids
+
     # ---- Statistics ----
 
     def get_stats(self) -> Dict[str, Any]:

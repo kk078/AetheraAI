@@ -287,7 +287,7 @@ PATTERNS: List[CodePattern] = [
         name="ICD-10-PCS Procedure Code",
         code_type="icd10_pcs",
         pattern=re.compile(
-            r"\b([0-9A-Z]{7})\b",
+            r"\b([0-9A-F][0-9A-Z]{2}[0-9A-Z]{4})\b",
             re.IGNORECASE,
         ),
         description="ICD-10-PCS procedure codes (7 alphanumeric characters, e.g., 0DCJ0ZZ)",
@@ -302,7 +302,8 @@ PATTERNS: List[CodePattern] = [
         name="CPT Procedure Code",
         code_type="cpt",
         pattern=re.compile(
-            r"\b((?:\d{5})(?:[TF])?)\b",
+            r"(?:CPT[#:\s]*)?(\d{5}[TF]?)\b",
+            re.IGNORECASE,
         ),
         description="CPT procedure codes (5 digits, optionally T or F suffix)",
         validate_checksum=True,
@@ -373,7 +374,8 @@ PATTERNS: List[CodePattern] = [
         name="Revenue Code",
         code_type="revenue_code",
         pattern=re.compile(
-            r"\b(\d{3}0|\d{4})\b",
+            r"(?:REV[#:\s]*)?(\d{4})\b",
+            re.IGNORECASE,
         ),
         description="4-digit revenue codes (e.g., 0300, 0450, 0250)",
         validate_checksum=True,
@@ -387,10 +389,10 @@ PATTERNS: List[CodePattern] = [
         name="DRG Code",
         code_type="drg",
         pattern=re.compile(
-            r"(?:DRG[#:\s]*)?(\d{3,4})\b",
+            r"(?:DRG[#:\s]*)(\d{3,4})\b",
             re.IGNORECASE,
         ),
-        description="MS-DRG or APR-DRG codes (3-4 digits, e.g., 470, 291)",
+        description="MS-DRG or APR-DRG codes (3-4 digits, e.g., DRG 470, DRG 291)",
         validate_checksum=True,
         example="470",
     ),
@@ -416,10 +418,10 @@ PATTERNS: List[CodePattern] = [
         name="Place of Service Code",
         code_type="pos_code",
         pattern=re.compile(
-            r"(?:POS[#:\s]*)?(\d{2})\b",
+            r"(?:POS[#:\s]*)(\d{2})\b",
             re.IGNORECASE,
         ),
-        description="2-digit Place of Service codes (e.g., 11, 21, 23)",
+        description="2-digit Place of Service codes (e.g., POS 11, POS 21)",
         validate_checksum=False,
         example="11",
     ),
@@ -431,7 +433,7 @@ PATTERNS: List[CodePattern] = [
         name="CPT/HCPCS Modifier",
         code_type="modifier",
         pattern=re.compile(
-            r"\b([A-Z]{2}\d{0,2}|(?:25|26|59|76|77|80|82|GT|LT|RT|TC|26|50|51|52|53|54|62|66|76|77|78|79|80|82|LT|RT|TC)\b)",
+            r"\b([A-Z]{2}\d{0,2}|25|26|50|51|52|53|54|59|62|66|76|77|78|79|80|82|GT|LT|RT|TC)\b",
         ),
         description="CPT/HCPCS modifiers (e.g., 25, 59, LT, RT, TC)",
         validate_checksum=False,

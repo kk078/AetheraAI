@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import api from './utils/api';
 import ChatInterface from './components/chat/ChatInterface';
 import HealthcareDashboard from './components/dashboards/HealthcareDashboard';
 import FinanceDashboard from './components/dashboards/FinanceDashboard';
@@ -18,6 +19,7 @@ import AutomationBuilder from './components/skills/AutomationBuilder';
 import CoverageChecker from './components/healthcare/CoverageChecker';
 import EDIViewer from './components/healthcare/EDIViewer';
 import SettingsPanel from './components/settings/SettingsPanel';
+import PCControlPanel from './components/pc_control/PCControlPanel';
 import Sidebar from './components/common/Sidebar';
 import CommandPalette from './components/common/CommandPalette';
 
@@ -41,6 +43,7 @@ const VIEW_LABELS = {
   plugins: 'Plugin Manager',
   connectors: 'Connectors',
   automations: 'Automation Builder',
+  'pc-control': 'PC Control',
   conversations: 'Conversations',
   settings: 'Settings',
 };
@@ -83,6 +86,7 @@ function App() {
         '/plugins': 'plugins',
         '/connectors': 'connectors',
         '/automations': 'automations',
+        '/pc': 'pc-control',
         '/chat': 'chat',
         '/conversations': 'conversations',
         '/settings': 'settings',
@@ -115,6 +119,13 @@ function App() {
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
+
+  const handleViewChange = (view) => {
+    setCurrentView(view);
+    if (window.innerWidth < 768) {
+      setSidebarOpen(false);
+    }
+  };
 
   const renderView = () => {
     switch (currentView) {
@@ -152,6 +163,8 @@ function App() {
         return <ConnectorPanel />;
       case 'automations':
         return <AutomationBuilder />;
+      case 'pc-control':
+        return <PCControlPanel />;
       case 'conversations':
         return <ConversationsList onViewChange={setCurrentView} />;
       case 'settings':
@@ -168,7 +181,7 @@ function App() {
         isOpen={sidebarOpen}
         onToggle={() => setSidebarOpen(!sidebarOpen)}
         currentView={currentView}
-        onViewChange={setCurrentView}
+        onViewChange={handleViewChange}
       />
 
       <main className="flex-1 flex flex-col min-w-0">
@@ -177,6 +190,7 @@ function App() {
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
               className="p-2 hover:bg-aethera-surface rounded-lg transition-colors"
+              aria-label={sidebarOpen ? 'Close sidebar' : 'Open sidebar'}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
@@ -228,10 +242,9 @@ function ConversationsList({ onViewChange }) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/conversations');
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        if (!cancelled) setConversations(data.conversations || data || []);
+        const data = await api.listConversations();
+        const conversations = data.conversations || data || [];
+        if (!cancelled) setConversations(conversations);
       } catch (err) {
         if (!cancelled) setError(err.message);
       } finally {
@@ -333,22 +346,6 @@ function ConversationsList({ onViewChange }) {
             )}
           </button>
         ))}
-      </div>
-    </div>
-  );
-}
-
-/** Placeholder for views whose full component does not exist yet */
-function PlaceholderView({ title, description, icon }) {
-  return (
-    <div className="flex items-center justify-center h-full text-aethera-text-secondary">
-      <div className="text-center max-w-md">
-        <svg className="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d={icon || 'M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z'} />
-        </svg>
-        <h2 className="text-lg font-semibold text-aethera-foreground mb-1">{title}</h2>
-        <p>{description}</p>
-        <p className="text-xs mt-3 opacity-60">Full component coming soon</p>
       </div>
     </div>
   );

@@ -195,14 +195,10 @@ export const API_PATHS = {
   CLOUDFLARE_STATUS:  '/api/cloudflare/status',
   TUNNEL_STATUS:      '/api/cloudflare/tunnel/status',
 
-  // Clipboard
-  CLIPBOARD_ANALYZE:  '/api/clipboard/analyze',
-
   // System
   HEALTH:             '/api/health',
   MODELS:             '/api/models',
   VERSION:            '/api/version',
-  BACKUP:             '/api/backup',
 
   // Automations
   AUTOMATIONS:        '/api/automations',

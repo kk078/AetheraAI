@@ -36,7 +36,7 @@ export default function ChatInterface() {
       try {
         const res = await api.getModels();
         if (!cancelled && res.models) {
-          setAvailableModels(res.models.map((m) => m.id || m.name || m));
+          setAvailableModels(res.models.map((m) => m.model_name || m.id || m.name || String(m)));
         }
       } catch {
         // Use defaults from constants

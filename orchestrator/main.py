@@ -150,9 +150,20 @@ def _get_knowledge_graph():
 
 
 _temporal_processor = None
+_audit_db = None
 _action_queue = None
 _automation_engine = None
 _news_aggregator = None
+
+def _get_audit_db():
+    global _audit_db
+    if _audit_db is None:
+        try:
+            from infrastructure.security.audit_logger import AuditDatabase
+            _audit_db = AuditDatabase()
+        except Exception as e:
+            logger.warning(f"Audit database not available: {e}")
+    return _audit_db
 
 def _get_temporal_processor():
     global _temporal_processor
@@ -257,8 +268,8 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configured via environment in production
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -284,6 +295,7 @@ class ChatRequest(BaseModel):
     specialist: Optional[str] = Field(None, description="Force specific specialist")
     model: Optional[str] = Field(None, description="Force specific model")
     stream: bool = Field(True, description="Enable streaming response")
+    user_id: Optional[str] = Field("default_user", description="User ID for personalization")
     context: Optional[Dict[str, Any]] = Field(None, description="Additional context")
 
 
@@ -297,6 +309,7 @@ class ChatResponse(BaseModel):
     tools_used: List[str] = []
     reasoning: Optional[str] = None
     timestamp: datetime
+    teaching_mode: Optional[Dict[str, Any]] = None
 
 
 class SpecialistInfo(BaseModel):
@@ -490,7 +503,7 @@ async def chat(request: ChatRequest):
             specialist=routing_result.primary_specialist,
             tools=routing_result.recommended_tools,
             sensitivity=sensitivity_result,
-            user_id=getattr(request, 'user_id', 'default_user'),
+            user_id=request.user_id,
             query=request.message,
         )
 
@@ -526,6 +539,22 @@ async def chat(request: ChatRequest):
         )
 
         # 6. Create response
+        # Detect teaching mode intent
+        teaching_mode_data = None
+        try:
+            from skills.skill_creator import TeachingModeDetector
+            detector = TeachingModeDetector()
+            intent = detector.detect(request.message, messages)
+            if intent.is_teaching:
+                teaching_mode_data = {
+                    "detected": True,
+                    "confidence": intent.confidence,
+                    "patterns": intent.detected_patterns,
+                    "suggested_action": intent.suggested_action,
+                }
+        except Exception:
+            pass  # Teaching mode detection is optional
+
         response = ChatResponse(
             conversation_id=conversation_id,
             message=ChatMessage(
@@ -541,7 +570,8 @@ async def chat(request: ChatRequest):
             confidence=routing_result.confidence,
             tools_used=routing_result.recommended_tools,
             reasoning=routing_result.reasoning,
-            timestamp=datetime.now()
+            timestamp=datetime.now(),
+            teaching_mode=teaching_mode_data
         )
 
         # 7. Log to audit trail
@@ -558,7 +588,7 @@ async def chat(request: ChatRequest):
         mm = _get_memory_manager()
         if mm:
             asyncio.create_task(mm.consolidate(
-                user_id=getattr(request, 'user_id', 'default_user'),
+                user_id=request.user_id,
                 query=request.message,
                 response=response_content,
                 specialist=routing_result.primary_specialist,
@@ -588,6 +618,7 @@ async def chat_stream(request: ChatRequest):
     """Streaming chat endpoint returning Server-Sent Events."""
     state.ensure_initialized()
 
+    start_time = time.time()
     conversation_id = request.conversation_id or str(uuid.uuid4())
 
     try:
@@ -610,7 +641,7 @@ async def chat_stream(request: ChatRequest):
             specialist=routing_result.primary_specialist,
             tools=routing_result.recommended_tools,
             sensitivity=sensitivity_result,
-            user_id=getattr(request, 'user_id', 'default_user'),
+            user_id=request.user_id,
             query=request.message,
         )
 
@@ -718,6 +749,24 @@ async def chat_stream(request: ChatRequest):
             except Exception as e:
                 yield f"data: {json.dumps({'type': 'error', 'error': str(e)[:200]})}\n\n"
 
+            # Log audit and consolidate memory (non-blocking)
+            try:
+                await log_audit_event(
+                    event_type="chat_stream",
+                    conversation_id=conversation_id,
+                    specialist=routing_result.primary_specialist,
+                    model=model_selection.model_name,
+                    sensitivity=sensitivity_result.sensitivity_level.value,
+                    duration_ms=int((time.time() - start_time) * 1000),
+                )
+            except Exception:
+                pass
+                yield f"data: {json.dumps({'type': 'error', 'error': 'LLM request timed out'})}\n\n"
+            except httpx.ConnectError:
+                yield f"data: {json.dumps({'type': 'error', 'error': 'Cannot connect to LLM service'})}\n\n"
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'error': str(e)[:200]})}\n\n"
+
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
     except Exception as e:
@@ -775,9 +824,10 @@ async def chat_multi_agent(request: ChatRequest):
     )
 
     # Log the multi-agent interaction
-    if _audit_db:
+    audit_db = _get_audit_db()
+    if audit_db:
         try:
-            _audit_db.log(
+            audit_db.log(
                 user_id=request.user_id or "anonymous",
                 action="multi_agent_chat",
                 resource=f"specialists:{','.join(result.get('specialists_consulted', []))}",
@@ -876,6 +926,13 @@ async def get_specialist(specialist_name: str):
         **specialist
     }
 
+
+@app.post("/api/specialists/{specialist_name}/query")
+async def query_specialist(specialist_name: str, request: ChatRequest):
+    """Query a specific specialist directly."""
+    request.specialist = specialist_name
+    return await chat(request)
+
 # =============================================================================
 # SKILLS ENDPOINTS
 # =============================================================================
@@ -918,11 +975,882 @@ async def execute_skill(skill_name: str, parameters: Dict[str, Any]):
     registry = _get_skill_registry()
     if registry is None:
         raise HTTPException(status_code=503, detail="Skill registry not available")
+    import time as _time
+    _start = _time.time()
     try:
         result = await registry.execute(skill_name, **parameters)
+        _elapsed = (_time.time() - _start) * 1000
+        # Track effectiveness
+        try:
+            from skills.skill_effectiveness import get_effectiveness_tracker
+            tracker = get_effectiveness_tracker()
+            tracker.record_invocation(
+                skill_name=skill_name,
+                success=result.success,
+                execution_time_ms=_elapsed,
+                error=result.error if not result.success else None,
+            )
+        except Exception:
+            pass  # Effectiveness tracking is optional
         return {"success": result.success, "result": result.data, "error": result.error}
     except Exception as e:
+        _elapsed = (_time.time() - _start) * 1000
+        # Track failed invocation
+        try:
+            from skills.skill_effectiveness import get_effectiveness_tracker
+            tracker = get_effectiveness_tracker()
+            tracker.record_invocation(
+                skill_name=skill_name,
+                success=False,
+                execution_time_ms=_elapsed,
+                error=str(e),
+            )
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# SKILL CREATION & SELF-CREATION ENDPOINTS
+# =============================================================================
+
+class SkillCreationRequest(BaseModel):
+    """Request to create a skill from conversation messages."""
+    messages: List[Dict[str, str]] = Field(..., description="Conversation messages with role and content")
+    category: Optional[str] = Field("general", description="Skill category override")
+
+class SkillFromSpecRequest(BaseModel):
+    """Request to create a skill directly from a workflow specification."""
+    name: str = Field(..., description="Snake_case skill name")
+    display_name: Optional[str] = Field("", description="Human-friendly name")
+    description: str = Field(..., description="What the skill does")
+    category: Optional[str] = Field("general", description="Skill category")
+    inputs: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="Input parameters")
+    outputs: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="Output fields")
+    steps: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="Processing steps")
+    rules: Optional[List[str]] = Field(default_factory=list, description="Condition/constraint rules")
+    examples: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="Input/output examples")
+
+class SkillValidateRequest(BaseModel):
+    """Request to validate skill code without deploying."""
+    code: str = Field(..., description="Python source code to validate")
+
+class SkillFeedbackRequest(BaseModel):
+    """Request to submit effectiveness feedback for a skill."""
+    rating: int = Field(..., ge=1, le=5, description="Rating from 1-5")
+    feedback_text: Optional[str] = Field("", description="Optional text feedback")
+    context: Optional[Dict[str, Any]] = Field(None, description="Optional context")
+
+
+@app.post("/api/skills/create")
+async def create_skill_from_conversation(request: SkillCreationRequest):
+    """Create a new skill from a teaching conversation."""
+    try:
+        from skills.skill_creator import (
+            TeachingModeDetector, WorkflowExtractor, SkillCodeGenerator,
+            SkillValidator, SkillSandboxTester, create_skill_from_conversation,
+        )
+
+        generated, validation, test_result = await create_skill_from_conversation(
+            messages=request.messages,
+        )
+
+        return {
+            "spec": {
+                "name": generated.spec.name if generated.spec else "",
+                "display_name": generated.spec.display_name if generated.spec else "",
+                "description": generated.spec.description if generated.spec else "",
+                "category": generated.spec.category if generated.spec else request.category,
+                "inputs": generated.spec.inputs if generated.spec else [],
+                "outputs": generated.spec.outputs if generated.spec else [],
+                "steps": generated.spec.steps if generated.spec else [],
+                "rules": generated.spec.rules if generated.spec else [],
+            },
+            "code": generated.code,
+            "file_path": generated.file_path,
+            "validation": {
+                "is_safe": validation.is_safe,
+                "errors": validation.errors,
+                "warnings": validation.warnings,
+            },
+            "test_result": {
+                "passed": test_result.passed,
+                "errors": test_result.errors,
+                "execution_time_ms": test_result.execution_time_ms,
+            },
+        }
+    except Exception as e:
+        logger.error(f"Skill creation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/skills/create-from-spec")
+async def create_skill_from_spec(request: SkillFromSpecRequest):
+    """Create a skill directly from a workflow specification."""
+    try:
+        from skills.skill_creator import WorkflowSpec, SkillCodeGenerator, SkillValidator
+
+        spec = WorkflowSpec(
+            name=request.name,
+            display_name=request.display_name or request.name.replace("_", " ").title(),
+            description=request.description,
+            category=request.category,
+            inputs=request.inputs or [{"name": "input", "type": "string", "description": "Input data", "required": True}],
+            outputs=request.outputs or [{"name": "result", "type": "string", "description": "Processing result"}],
+            steps=request.steps,
+            rules=request.rules,
+            examples=request.examples,
+        )
+
+        generator = SkillCodeGenerator()
+        generated = await generator.generate(spec)
+
+        validator = SkillValidator()
+        if generated.code:
+            validation = validator.validate(generated.code)
+        else:
+            validation = __import__("skills.skill_creator", fromlist=["ValidationResult"]).ValidationResult(
+                is_safe=False, errors=["No code generated"]
+            )
+
+        return {
+            "spec": {
+                "name": spec.name,
+                "display_name": spec.display_name,
+                "description": spec.description,
+                "category": spec.category,
+                "inputs": spec.inputs,
+                "outputs": spec.outputs,
+                "steps": spec.steps,
+                "rules": spec.rules,
+            },
+            "code": generated.code,
+            "file_path": generated.file_path,
+            "validation": {
+                "is_safe": validation.is_safe,
+                "errors": validation.errors,
+                "warnings": validation.warnings,
+            },
+        }
+    except Exception as e:
+        logger.error(f"Skill creation from spec failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/skills/validate")
+async def validate_skill_code(request: SkillValidateRequest):
+    """Validate skill code for safety without deploying it."""
+    try:
+        from skills.skill_creator import SkillValidator
+
+        validator = SkillValidator()
+        result = validator.validate(request.code)
+
+        return {
+            "is_safe": result.is_safe,
+            "errors": result.errors,
+            "warnings": result.warnings,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/skills/test/{skill_name}")
+async def test_skill(skill_name: str):
+    """Run sandbox tests on a generated skill."""
+    try:
+        from skills.skill_creator import SkillSandboxTester, WorkflowSpec
+        from skills.skill_registry import get_registry
+
+        registry = get_registry()
+        skill = registry.get(skill_name)
+        if not skill:
+            raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+
+        # Get the skill's source file for testing
+        file_path = registry.get_skill_file_path(skill_name)
+        if not file_path or not file_path.exists():
+            raise HTTPException(status_code=404, detail=f"Source file for skill '{skill_name}' not found")
+
+        code = file_path.read_text(encoding="utf-8")
+        spec = WorkflowSpec(
+            name=skill.name,
+            description=skill.description,
+        )
+
+        tester = SkillSandboxTester()
+        result = await tester.test(code, spec)
+
+        return {
+            "passed": result.passed,
+            "results": result.results,
+            "errors": result.errors,
+            "execution_time_ms": result.execution_time_ms,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/skills/approve/{skill_name}")
+async def approve_skill(skill_name: str):
+    """Approve and activate a draft user-created skill."""
+    try:
+        from skills.skill_registry import get_registry
+
+        registry = get_registry()
+        skill = registry.get(skill_name)
+
+        if skill and skill.source == "user_created":
+            # Skill already registered — just confirm it's active
+            return {
+                "status": "active",
+                "skill_name": skill_name,
+                "message": f"Skill '{skill_name}' is already active",
+            }
+
+        # Try to hot-reload to pick up new skills
+        result = registry.hot_reload()
+        skill = registry.get(skill_name)
+
+        if not skill:
+            raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found after reload")
+
+        return {
+            "status": "active",
+            "skill_name": skill_name,
+            "version": skill.version,
+            "source": skill.source,
+            "message": f"Skill '{skill_name}' approved and activated",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/skills/reject/{skill_name}")
+async def reject_skill(skill_name: str):
+    """Reject and delete a draft user-created skill."""
+    try:
+        from skills.skill_registry import get_registry
+
+        registry = get_registry()
+        skill = registry.get(skill_name)
+
+        if not skill:
+            raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+
+        if skill.source != "user_created" and skill.source != "auto_generated":
+            raise HTTPException(status_code=400, detail=f"Cannot reject built-in skill '{skill_name}'")
+
+        # Get the source file path and delete it
+        file_path = registry.get_skill_file_path(skill_name)
+        if file_path and file_path.exists():
+            file_path.unlink()
+            logger.info(f"Deleted skill file: {file_path}")
+
+        # Unregister from memory
+        registry.unregister(skill_name)
+
+        return {
+            "status": "rejected",
+            "skill_name": skill_name,
+            "message": f"Skill '{skill_name}' rejected and removed",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/skills/feedback/{skill_name}")
+async def submit_skill_feedback(skill_name: str, request: SkillFeedbackRequest):
+    """Submit effectiveness feedback for a skill."""
+    try:
+        from skills.skill_effectiveness import get_effectiveness_tracker
+
+        tracker = get_effectiveness_tracker()
+        fb_id = tracker.record_feedback(
+            skill_name=skill_name,
+            rating=request.rating,
+            feedback_text=request.feedback_text,
+            context=request.context,
+        )
+
+        return {
+            "feedback_id": fb_id,
+            "skill_name": skill_name,
+            "rating": request.rating,
+            "message": f"Feedback recorded for skill '{skill_name}'",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/skills/feedback/{skill_name}")
+async def get_skill_feedback(skill_name: str):
+    """Get effectiveness data for a skill."""
+    try:
+        from skills.skill_effectiveness import get_effectiveness_tracker
+
+        tracker = get_effectiveness_tracker()
+        effectiveness = tracker.get_effectiveness(skill_name)
+
+        if not effectiveness:
+            return {
+                "skill_name": skill_name,
+                "effectiveness": None,
+                "suggestions": [],
+                "message": "No effectiveness data yet",
+            }
+
+        suggestions = tracker.get_optimization_suggestions(skill_name)
+
+        return {
+            "skill_name": skill_name,
+            "effectiveness": effectiveness,
+            "suggestions": suggestions,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/skills/proposals")
+async def list_skill_proposals(status: Optional[str] = None, category: Optional[str] = None):
+    """List auto-proposed skills."""
+    try:
+        from skills.skill_self_proposal import get_proposal_engine
+
+        engine = get_proposal_engine()
+        proposals = engine.list_proposals(status=status, category=category)
+
+        return {"proposals": proposals, "total": len(proposals)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/skills/proposals/{proposal_id}/approve")
+async def approve_skill_proposal(proposal_id: str):
+    """Approve an auto-proposed skill and generate it."""
+    try:
+        from skills.skill_self_proposal import get_proposal_engine
+
+        engine = get_proposal_engine()
+        proposal = engine.approve_proposal(proposal_id)
+
+        if not proposal:
+            raise HTTPException(status_code=404, detail=f"Proposal '{proposal_id}' not found or not in 'proposed' state")
+
+        # Generate the skill code
+        result = await engine.generate_skill(proposal_id)
+
+        if result and result.get("status") == "active":
+            # Write the file to disk
+            file_path = engine.write_skill_file(proposal_id)
+            return {
+                "status": "active",
+                "proposal_id": proposal_id,
+                "skill_name": result.get("name"),
+                "file_path": file_path,
+                "message": "Skill proposal approved, generated, and deployed",
+            }
+        else:
+            return {
+                "status": result.get("status", "failed") if result else "failed",
+                "proposal_id": proposal_id,
+                "message": "Skill generation failed",
+                "errors": result.get("failed_reason", "") if result else "Unknown error",
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/skills/proposals/{proposal_id}/reject")
+async def reject_skill_proposal(proposal_id: str, reason: Optional[str] = None):
+    """Reject an auto-proposed skill."""
+    try:
+        from skills.skill_self_proposal import get_proposal_engine
+
+        engine = get_proposal_engine()
+        success = engine.reject_proposal(proposal_id, reason=reason or "")
+
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Proposal '{proposal_id}' not found")
+
+        return {
+            "status": "rejected",
+            "proposal_id": proposal_id,
+            "message": "Skill proposal rejected",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/skills/reload")
+async def reload_skills():
+    """Trigger hot-reload of user-created skills."""
+    try:
+        from skills.skill_registry import get_registry
+
+        registry = get_registry()
+        result = registry.hot_reload()
+
+        return {
+            "status": "reloaded",
+            "added": result.get("added", []),
+            "removed": result.get("removed", []),
+            "updated": result.get("updated", []),
+            "total_skills": result.get("total", 0),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/skills/scan-proposals")
+async def scan_for_proposals():
+    """Scan knowledge gaps and propose new skills if warranted."""
+    try:
+        from skills.skill_self_proposal import get_proposal_engine
+        from memory.knowledge_gaps import get_knowledge_gap_store
+        from skills.skill_registry import get_registry
+
+        engine = get_proposal_engine()
+        gap_store = get_knowledge_gap_store()
+        registry = get_registry()
+
+        proposal = engine.scan_and_propose(
+            gap_store=gap_store,
+            skill_registry=registry,
+        )
+
+        if proposal:
+            return {"proposed": True, "proposal": proposal}
+        else:
+            return {"proposed": False, "message": "No high-priority gaps found that warrant a new skill"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# DATA INTELLIGENCE ENDPOINTS
+# =============================================================================
+
+_dataset_store = None
+_data_pipeline = None
+
+
+def _get_dataset_store():
+    global _dataset_store
+    if _dataset_store is None:
+        try:
+            from data_intelligence.store import get_dataset_store
+            _dataset_store = get_dataset_store()
+        except Exception as e:
+            logger.warning(f"Dataset store not available: {e}")
+    return _dataset_store
+
+
+def _get_data_pipeline():
+    global _data_pipeline
+    if _data_pipeline is None:
+        try:
+            from data_intelligence.pipeline import DataIntelligencePipeline
+            _data_pipeline = DataIntelligencePipeline()
+        except Exception as e:
+            logger.warning(f"Data intelligence pipeline not available: {e}")
+    return _data_pipeline
+
+
+class DatasetCreateRequest(BaseModel):
+    """Request to register a new dataset."""
+    name: str = Field(..., description="Dataset name")
+    description: str = Field("", description="Dataset description")
+    source_type: str = Field("inline", description="Data source: 'file', 'inline', or 'url'")
+    source_path: str = Field("", description="File path or URL")
+    data: Optional[List[Dict[str, Any]]] = Field(None, description="Inline data rows")
+    format: str = Field("csv", description="Data format: csv, json, xlsx, parquet")
+    options: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Processing options")
+
+
+class DatasetProcessRequest(BaseModel):
+    """Request to process a dataset through the pipeline."""
+    stages: Optional[List[str]] = Field(None, description="Stages to run (default: all)")
+    options: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Stage-specific options")
+
+
+class AnnotationRequest(BaseModel):
+    """Request to annotate dataset rows."""
+    annotation_types: List[str] = Field(["category", "sentiment", "entity"], description="Types of annotations")
+    sample_size: Optional[int] = Field(500, description="Max rows to annotate via LLM")
+    use_llm: bool = Field(True, description="Use LLM for annotation")
+
+
+class ExportRequest(BaseModel):
+    """Request to export a dataset."""
+    format: str = Field("csv", description="Export format: csv, json, jsonl, parquet, xlsx")
+    columns: Optional[List[str]] = Field(None, description="Columns to include (default: all)")
+    output_path: Optional[str] = Field(None, description="File path to write export")
+
+
+class VersionCreateRequest(BaseModel):
+    """Request to create a dataset version."""
+    change_description: str = Field("", description="Description of changes")
+
+
+@app.post("/api/data-intelligence/datasets")
+async def create_dataset(request: DatasetCreateRequest):
+    """Register a new dataset."""
+    store = _get_dataset_store()
+    if store is None:
+        raise HTTPException(status_code=503, detail="Dataset store not available")
+    try:
+        dataset = store.create_dataset(
+            name=request.name,
+            source_type=request.source_type,
+            source_path=request.source_path,
+            description=request.description,
+            format=request.format,
+        )
+        return dataset
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/data-intelligence/datasets")
+async def list_datasets(
+    source_type: Optional[str] = None,
+    format: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """List all datasets."""
+    store = _get_dataset_store()
+    if store is None:
+        raise HTTPException(status_code=503, detail="Dataset store not available")
+    return {"datasets": store.list_datasets(source_type=source_type, format=format, limit=limit, offset=offset)}
+
+
+@app.get("/api/data-intelligence/datasets/{dataset_id}")
+async def get_dataset(dataset_id: str):
+    """Get dataset details."""
+    store = _get_dataset_store()
+    if store is None:
+        raise HTTPException(status_code=503, detail="Dataset store not available")
+    dataset = store.get_dataset(dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found")
+    return dataset
+
+
+@app.delete("/api/data-intelligence/datasets/{dataset_id}")
+async def delete_dataset(dataset_id: str):
+    """Delete a dataset and all associated data."""
+    store = _get_dataset_store()
+    if store is None:
+        raise HTTPException(status_code=503, detail="Dataset store not available")
+    success = store.delete_dataset(dataset_id)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found")
+    return {"status": "deleted", "dataset_id": dataset_id}
+
+
+@app.post("/api/data-intelligence/datasets/{dataset_id}/process")
+async def process_dataset(dataset_id: str, request: DatasetProcessRequest):
+    """Run the data intelligence pipeline on a dataset."""
+    store = _get_dataset_store()
+    pipeline = _get_data_pipeline()
+    if store is None or pipeline is None:
+        raise HTTPException(status_code=503, detail="Data intelligence pipeline not available")
+
+    dataset = store.get_dataset(dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found")
+
+    from data_intelligence.context import DataPipelineContext
+    context = DataPipelineContext(
+        dataset_id=dataset_id,
+        name=dataset.get("name", ""),
+        source_type=dataset.get("source_type", "inline"),
+        source_path=dataset.get("source_path", ""),
+        format=dataset.get("format", "csv"),
+        options=request.options or {},
+    )
+
+    result = await pipeline.run(context, stages=request.stages)
+    return {
+        "dataset_id": result.dataset_id,
+        "name": result.name,
+        "status": result.status,
+        "stages_completed": result.stages_completed,
+        "stages_failed": result.stages_failed,
+        "row_count": result.row_count,
+        "quality_scores": result.quality_scores,
+        "schema_info": result.schema_info,
+        "version_number": result.version_number,
+        "checksum": result.checksum,
+    }
+
+
+@app.post("/api/data-intelligence/datasets/{dataset_id}/annotate")
+async def annotate_dataset(dataset_id: str, request: AnnotationRequest):
+    """Run the annotation stage on a dataset."""
+    store = _get_dataset_store()
+    pipeline = _get_data_pipeline()
+    if store is None or pipeline is None:
+        raise HTTPException(status_code=503, detail="Data intelligence pipeline not available")
+
+    dataset = store.get_dataset(dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found")
+
+    from data_intelligence.context import DataPipelineContext
+    context = DataPipelineContext(
+        dataset_id=dataset_id,
+        name=dataset.get("name", ""),
+        source_type=dataset.get("source_type", "inline"),
+        source_path=dataset.get("source_path", ""),
+        format=dataset.get("format", "csv"),
+        options={
+            "annotation_types": request.annotation_types,
+            "annotation_sample_size": request.sample_size,
+            "use_llm": request.use_llm,
+        },
+    )
+
+    result = await pipeline.run(context, stages=["curation", "annotation"])
+    return {
+        "dataset_id": dataset_id,
+        "stages_completed": result.stages_completed,
+        "stages_failed": result.stages_failed,
+        "annotations_count": result.annotations_count,
+    }
+
+
+@app.get("/api/data-intelligence/datasets/{dataset_id}/annotations")
+async def get_annotations(
+    dataset_id: str,
+    annotation_type: Optional[str] = None,
+    limit: int = 100,
+):
+    """Get annotations for a dataset."""
+    store = _get_dataset_store()
+    if store is None:
+        raise HTTPException(status_code=503, detail="Dataset store not available")
+    annotations = store.get_annotations(
+        dataset_id=dataset_id,
+        annotation_type=annotation_type,
+        limit=limit,
+    )
+    return {"annotations": annotations, "total": len(annotations)}
+
+
+@app.post("/api/data-intelligence/datasets/{dataset_id}/quality")
+async def score_quality(dataset_id: str, request: Optional[DatasetProcessRequest] = None):
+    """Compute quality scores for a dataset."""
+    store = _get_dataset_store()
+    pipeline = _get_data_pipeline()
+    if store is None or pipeline is None:
+        raise HTTPException(status_code=503, detail="Data intelligence pipeline not available")
+
+    dataset = store.get_dataset(dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found")
+
+    from data_intelligence.context import DataPipelineContext
+    context = DataPipelineContext(
+        dataset_id=dataset_id,
+        name=dataset.get("name", ""),
+        source_type=dataset.get("source_type", "inline"),
+        source_path=dataset.get("source_path", ""),
+        format=dataset.get("format", "csv"),
+        options=request.options if request else {},
+    )
+
+    result = await pipeline.run(context, stages=["curation", "quality"])
+    return {
+        "dataset_id": dataset_id,
+        "quality_scores": result.quality_scores,
+        "quality_details": result.quality_details,
+    }
+
+
+@app.get("/api/data-intelligence/datasets/{dataset_id}/quality")
+async def get_quality(dataset_id: str):
+    """Get the latest quality scores for a dataset."""
+    store = _get_dataset_store()
+    if store is None:
+        raise HTTPException(status_code=503, detail="Dataset store not available")
+
+    score = store.get_quality_score(dataset_id)
+    if not score:
+        return {"dataset_id": dataset_id, "quality": None, "message": "No quality scores yet"}
+    return {"dataset_id": dataset_id, "quality": score}
+
+
+@app.post("/api/data-intelligence/datasets/{dataset_id}/schema")
+async def detect_schema(dataset_id: str, request: Optional[DatasetProcessRequest] = None):
+    """Run schema detection on a dataset."""
+    store = _get_dataset_store()
+    pipeline = _get_data_pipeline()
+    if store is None or pipeline is None:
+        raise HTTPException(status_code=503, detail="Data intelligence pipeline not available")
+
+    dataset = store.get_dataset(dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found")
+
+    from data_intelligence.context import DataPipelineContext
+    context = DataPipelineContext(
+        dataset_id=dataset_id,
+        name=dataset.get("name", ""),
+        source_type=dataset.get("source_type", "inline"),
+        source_path=dataset.get("source_path", ""),
+        format=dataset.get("format", "csv"),
+        options=request.options if request else {},
+    )
+
+    result = await pipeline.run(context, stages=["curation", "schema_detect"])
+    return {
+        "dataset_id": dataset_id,
+        "schema_info": result.schema_info,
+        "primary_key": result.detected_primary_key,
+        "foreign_keys": result.detected_foreign_keys,
+    }
+
+
+@app.get("/api/data-intelligence/datasets/{dataset_id}/schema")
+async def get_schema(dataset_id: str):
+    """Get the detected schema for a dataset."""
+    store = _get_dataset_store()
+    if store is None:
+        raise HTTPException(status_code=503, detail="Dataset store not available")
+
+    dataset = store.get_dataset(dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found")
+
+    return {
+        "dataset_id": dataset_id,
+        "schema_info": dataset.get("schema_json"),
+        "row_count": dataset.get("row_count", 0),
+        "column_count": dataset.get("column_count", 0),
+    }
+
+
+@app.post("/api/data-intelligence/datasets/{dataset_id}/versions")
+async def create_version(dataset_id: str, request: VersionCreateRequest):
+    """Create a version snapshot for a dataset."""
+    store = _get_dataset_store()
+    pipeline = _get_data_pipeline()
+    if store is None or pipeline is None:
+        raise HTTPException(status_code=503, detail="Data intelligence pipeline not available")
+
+    dataset = store.get_dataset(dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found")
+
+    from data_intelligence.context import DataPipelineContext
+    context = DataPipelineContext(
+        dataset_id=dataset_id,
+        name=dataset.get("name", ""),
+        source_type=dataset.get("source_type", "inline"),
+        source_path=dataset.get("source_path", ""),
+        format=dataset.get("format", "csv"),
+    )
+
+    result = await pipeline.run(context, stages=["curation", "versioning"])
+    return {
+        "dataset_id": dataset_id,
+        "version_id": result.version_id,
+        "version_number": result.version_number,
+        "checksum": result.checksum,
+    }
+
+
+@app.get("/api/data-intelligence/datasets/{dataset_id}/versions")
+async def list_versions(dataset_id: str, limit: int = 20):
+    """List all versions for a dataset."""
+    store = _get_dataset_store()
+    if store is None:
+        raise HTTPException(status_code=503, detail="Dataset store not available")
+
+    versions = store.list_versions(dataset_id, limit=limit)
+    return {"versions": versions, "total": len(versions)}
+
+
+@app.get("/api/data-intelligence/datasets/{dataset_id}/versions/{version_id}")
+async def get_version(dataset_id: str, version_id: str):
+    """Get a specific version."""
+    store = _get_dataset_store()
+    if store is None:
+        raise HTTPException(status_code=503, detail="Dataset store not available")
+
+    version = store.get_version(version_id)
+    if not version:
+        raise HTTPException(status_code=404, detail=f"Version '{version_id}' not found")
+    return version
+
+
+@app.post("/api/data-intelligence/datasets/{dataset_id}/export")
+async def export_dataset(dataset_id: str, request: ExportRequest):
+    """Export a dataset in the specified format."""
+    store = _get_dataset_store()
+    pipeline = _get_data_pipeline()
+    if store is None or pipeline is None:
+        raise HTTPException(status_code=503, detail="Data intelligence pipeline not available")
+
+    dataset = store.get_dataset(dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found")
+
+    from data_intelligence.context import DataPipelineContext
+    context = DataPipelineContext(
+        dataset_id=dataset_id,
+        name=dataset.get("name", ""),
+        source_type=dataset.get("source_type", "inline"),
+        source_path=dataset.get("source_path", ""),
+        format=dataset.get("format", "csv"),
+        options={
+            "export_format": request.format,
+            "export_columns": request.columns,
+            "output_path": request.output_path,
+        },
+        export_format=request.format,
+    )
+
+    result = await pipeline.run(context, stages=["curation", "export"])
+
+    if request.format in ("parquet", "xlsx") and result.export_available:
+        from fastapi.responses import Response
+        content_type = "application/octet-stream"
+        if request.format == "xlsx":
+            content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        # For binary formats, we'd need to store the bytes during pipeline run
+        return {"dataset_id": dataset_id, "format": request.format, "export_path": result.export_path, "available": True}
+
+    return {
+        "dataset_id": dataset_id,
+        "format": result.export_format,
+        "content_preview": result.export_content[:500] if result.export_content else None,
+        "available": result.export_available,
+        "export_path": result.export_path,
+    }
+
+
+@app.get("/api/data-intelligence/stats")
+async def get_data_intelligence_stats():
+    """Get aggregate stats across all datasets."""
+    store = _get_dataset_store()
+    if store is None:
+        raise HTTPException(status_code=503, detail="Dataset store not available")
+    return store.get_stats()
+
 
 # =============================================================================
 # PLUGINS & CONNECTORS ENDPOINTS
@@ -1102,7 +2030,7 @@ async def coverage_check(code: str, payer: str):
     if registry is None:
         return {"covered": True, "criteria": []}
     try:
-        result = await registry.execute("coverage_checker", action="check_coverage", cpt=code, diagnosis=payer)
+        result = await registry.execute("coverage_checker", action="check_coverage", cpt=code, payer=payer)
         return result.data if result.success else {"covered": True, "criteria": [], "error": result.error}
     except Exception:
         return {"covered": True, "criteria": []}
@@ -1133,14 +2061,8 @@ async def denial_predict(claim_data: Dict[str, Any]):
     try:
         result = await registry.execute(
             "denial_predictor",
-            diagnosis_codes=claim_data.get("diagnosis_codes", []),
-            procedure_codes=claim_data.get("procedure_codes", []),
-            modifiers=claim_data.get("modifiers", []),
-            place_of_service=claim_data.get("place_of_service", "office"),
-            payer=claim_data.get("payer", "unknown"),
-            service_type=claim_data.get("service_type", "other"),
-            prior_authorization_obtained=claim_data.get("prior_authorization_obtained"),
-            patient_new_or_established=claim_data.get("patient_new_or_established", "new"),
+            action="predict",
+            claim_data=claim_data,
         )
         return result.data if result.success else {"denial_probability": 0.15, "risk_factors": [], "error": result.error}
     except Exception as e:
@@ -1158,6 +2080,32 @@ async def appeal_generate(denial_info: Dict[str, Any]):
         return result.data if result.success else {"letter": "", "error": result.error}
     except Exception:
         return {"letter": "Appeal generation service error"}
+
+
+@app.post("/api/healthcare/claim-analysis")
+async def claim_analysis(data: Dict[str, Any]):
+    """Analyze a claim for errors and scrub before submission."""
+    registry = _get_skill_registry()
+    if registry is None:
+        return {"analysis": {}, "errors": [], "warnings": []}
+    try:
+        result = await registry.execute("claim_scrubber", action="analyze", claim_data=data)
+        return result.data if result.success else {"analysis": {}, "errors": [], "warnings": [], "error": result.error}
+    except Exception as e:
+        return {"analysis": {}, "errors": [], "warnings": [], "error": str(e)}
+
+
+@app.post("/api/healthcare/code-search")
+async def code_search(data: Dict[str, Any]):
+    """Search healthcare codes by keyword."""
+    registry = _get_skill_registry()
+    if registry is None:
+        return {"results": []}
+    try:
+        result = await registry.execute("code_lookup", action="search", query=data.get("search", ""), code_type=data.get("codeType", "all"))
+        return result.data if result.success else {"results": [], "error": result.error}
+    except Exception as e:
+        return {"results": [], "error": str(e)}
 
 
 @app.post("/api/healthcare/drg-group")
@@ -1266,6 +2214,22 @@ async def cloudflare_status():
         return {"status": "error", "zones": [], "tunnels": [], "workers": []}
 
 
+@app.get("/api/cloudflare/tunnel/status")
+async def cloudflare_tunnel_status():
+    """Get Cloudflare tunnel status."""
+    try:
+        from plugins.cloudflare.tunnel_manager import TunnelManager
+        cf_token = os.getenv("CLOUDFLARE_API_TOKEN", "")
+        cf_account = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
+        if not cf_token:
+            return {"status": "not_configured", "tunnels": []}
+        tunnels = TunnelManager(cf_token, cf_account)
+        tunnel_list = await tunnels.list_tunnels() if tunnels else []
+        return {"status": "ok", "tunnels": tunnel_list}
+    except Exception:
+        return {"status": "error", "tunnels": []}
+
+
 @app.get("/api/cloudflare/zones")
 async def cloudflare_zones():
     """List Cloudflare zones."""
@@ -1348,7 +2312,7 @@ async def search_memory(query: str, collection: str = "user_memories", top_k: in
     if vs is None:
         return {"results": []}
     try:
-        if not vs._session:
+        if not hasattr(vs, '_initialized') or not vs._initialized:
             await vs.initialize()
         results = await vs.search(collection, query, top_k=top_k)
         return {"results": results}
@@ -2599,7 +3563,7 @@ async def update_settings(settings: Dict[str, Any]):
 # =============================================================================
 
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...), auto_learn: bool = True):
     """Upload and auto-process file."""
     try:
         upload_dir = PROJECT_ROOT / "data" / "uploads"
@@ -2639,9 +3603,223 @@ async def upload_file(file: UploadFile = File(...)):
             result["type"] = "other"
             result["message"] = "File uploaded successfully."
 
+        # Auto-learning pipeline
+        if auto_learn:
+            try:
+                from pipeline.pipeline import run_pipeline_for_file
+                job_id = str(uuid.uuid4())
+                asyncio.create_task(run_pipeline_for_file(
+                    file_path=str(file_path),
+                    filename=file.filename,
+                    content_type=file.content_type,
+                    job_id=job_id,
+                ))
+                result["pipeline_job_id"] = job_id
+                result["auto_learn"] = True
+                result["message"] = "File uploaded and auto-learning pipeline started."
+            except Exception as e:
+                logger.warning(f"Auto-learning pipeline enqueue failed: {e}")
+
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# AUTO-LEARNING PIPELINE ENDPOINTS
+# =============================================================================
+
+class LearnURLRequest(BaseModel):
+    url: str = Field(..., description="URL to fetch and learn from")
+    domain: str = Field(default="general", description="Optional domain hint")
+
+
+@app.get("/api/pipeline/status/{job_id}")
+async def get_pipeline_status(job_id: str):
+    """Get the status of an auto-learning pipeline job."""
+    try:
+        from pipeline.pipeline import AutoLearningPipeline
+        result = AutoLearningPipeline.get_job_status(job_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return {
+            "job_id": result.job_id,
+            "status": result.status,
+            "stages_completed": result.stages_completed,
+            "stages_failed": result.stages_failed,
+            "notification": result.notification,
+            "file_type": result.file_type,
+            "domain": result.domain,
+            "sensitivity": result.sensitivity,
+            "entity_count": result.entity_count,
+            "fact_count": result.fact_count,
+            "chunk_count": result.chunk_count,
+            "contradiction_count": result.contradiction_count,
+            "started_at": result.started_at,
+            "completed_at": result.completed_at,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/pipeline/jobs")
+async def list_pipeline_jobs():
+    """List all auto-learning pipeline jobs."""
+    try:
+        from pipeline.pipeline import AutoLearningPipeline
+        return AutoLearningPipeline.list_jobs()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/pipeline/learn-url")
+async def learn_from_url(request: LearnURLRequest):
+    """Fetch a URL and run the auto-learning pipeline on its content."""
+    try:
+        from pipeline.pipeline import run_pipeline_for_url
+        job_id = str(uuid.uuid4())
+        asyncio.create_task(run_pipeline_for_url(
+            url=request.url,
+            domain=request.domain,
+            job_id=job_id,
+        ))
+        return {
+            "job_id": job_id,
+            "status": "processing",
+            "url": request.url,
+            "message": "Auto-learning pipeline started for URL.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# =============================================================================
+# PC CONTROL ENDPOINTS
+# =============================================================================
+
+_pc_control_manager = None
+
+
+def _get_pc_control_manager():
+    """Lazy-init PC Control Manager singleton."""
+    global _pc_control_manager
+    if _pc_control_manager is None:
+        from orchestrator.pc_control import get_pc_control_manager
+        _pc_control_manager = get_pc_control_manager(audit_db=_get_audit_db())
+    return _pc_control_manager
+
+
+class PCCommandRequest(BaseModel):
+    """Request model for PC control commands."""
+    action: str = Field(..., description="Action to execute, e.g. 'filesystem.browse'")
+    parameters: dict = Field(default_factory=dict, description="Action parameters")
+    user_id: str = Field(default="default_user")
+    session_id: Optional[str] = Field(default=None)
+
+
+class PCConfirmationRequest(BaseModel):
+    """Request model for confirming a destructive action."""
+    approved: bool = Field(..., description="Whether to approve the action")
+    reason: Optional[str] = Field(default=None)
+
+
+@app.websocket("/api/pc/ws")
+async def pc_control_ws(websocket: WebSocket):
+    """WebSocket endpoint for host agent connection."""
+    await websocket.accept()
+    manager = _get_pc_control_manager()
+    agent_id = None
+
+    try:
+        # Wait for registration message
+        data = await websocket.receive_json()
+        if data.get("type") != "register":
+            await websocket.close(code=4001, reason="First message must be a register")
+            return
+
+        agent_id = data.get("agent_id", "unknown")
+        capabilities = data.get("capabilities", [])
+        await manager.register_agent(agent_id, websocket, capabilities)
+        logger.info(f"PC host agent connected: {agent_id}")
+
+        # Main message loop
+        while True:
+            data = await websocket.receive_json()
+            msg_type = data.get("type", "")
+
+            if msg_type == "result":
+                command_id = data.get("command_id")
+                manager.handle_result(command_id, data)
+
+            elif msg_type == "confirmation_request":
+                command_id = data.get("command_id")
+                action = data.get("action", "")
+                description = data.get("description", "")
+                risk_level = data.get("risk_level", "high")
+                parameters = data.get("parameters", {})
+                await manager.handle_confirmation_request(
+                    command_id, action, description, risk_level, parameters
+                )
+
+            elif msg_type == "heartbeat":
+                # Update agent heartbeat
+                agent = manager.get_agent(agent_id)
+                if agent:
+                    agent.last_heartbeat = datetime.now()
+
+    except WebSocketDisconnect:
+        logger.info(f"PC host agent disconnected: {agent_id}")
+    except Exception as e:
+        logger.error(f"PC control WebSocket error: {e}")
+    finally:
+        if agent_id:
+            await manager.unregister_agent(agent_id)
+
+
+@app.post("/api/pc/command")
+async def send_pc_command(request: PCCommandRequest):
+    """Send a command to the host agent."""
+    manager = _get_pc_control_manager()
+    result = await manager.send_command(
+        action=request.action,
+        parameters=request.parameters,
+        user_id=request.user_id,
+        session_id=request.session_id or "",
+    )
+    return result
+
+
+@app.post("/api/pc/confirm/{command_id}")
+async def confirm_pc_action(command_id: str, request: PCConfirmationRequest):
+    """Confirm or deny a pending destructive action."""
+    manager = _get_pc_control_manager()
+    await manager.handle_confirmation_response(command_id, request.approved)
+    return {"command_id": command_id, "approved": request.approved}
+
+
+@app.get("/api/pc/status")
+async def get_pc_status():
+    """Get host agent connection status and capabilities."""
+    manager = _get_pc_control_manager()
+    return manager.get_status()
+
+
+@app.websocket("/api/pc/confirmations")
+async def pc_confirmations_ws(websocket: WebSocket):
+    """WebSocket for UI to receive confirmation requests in real-time."""
+    await websocket.accept()
+    manager = _get_pc_control_manager()
+    manager.register_confirmation_ws(websocket)
+    try:
+        while True:
+            # Keep connection alive; client just listens
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        manager.unregister_confirmation_ws(websocket)
+
 
 # =============================================================================
 # HELPER FUNCTIONS

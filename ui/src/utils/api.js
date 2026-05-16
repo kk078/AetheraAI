@@ -41,10 +41,11 @@ class ApiClient {
   }
 
   // Streaming chat with SSE
-  async *streamChat(messages, options = {}) {
+  async *streamChat(message, options = {}) {
     const response = await this.request('/api/chat/stream', {
       method: 'POST',
-      body: JSON.stringify({ messages, ...options }),
+      body: JSON.stringify({ message, ...options }),
+      signal: options.signal,
     });
 
     const reader = response.body.getReader();
@@ -148,7 +149,7 @@ class ApiClient {
   }
 
   // Healthcare Tools
-  async lookupCode(code, codeType) {
+  async lookupHealthcareCode(code, codeType) {
     const response = await this.post('/api/healthcare/code-lookup', { code, codeType });
     return response.json();
   }
@@ -412,26 +413,6 @@ class ApiClient {
   // Dashboard, Alerts, Queue
   async getDashboard() {
     const response = await this.get('/api/dashboard');
-    return response.json();
-  }
-
-  async getAlerts() {
-    const response = await this.get('/api/alerts');
-    return response.json();
-  }
-
-  async acknowledgeAlert(alertId) {
-    const response = await this.post(`/api/alerts/${alertId}/acknowledge`, {});
-    return response.json();
-  }
-
-  async getActionQueue() {
-    const response = await this.get('/api/queue');
-    return response.json();
-  }
-
-  async completeAction(itemId) {
-    const response = await this.post(`/api/queue/${itemId}/complete`, {});
     return response.json();
   }
 

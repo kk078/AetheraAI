@@ -26,7 +26,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install runtime dependencies
+# Install runtime dependencies (curl for healthcheck)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/* \
@@ -34,6 +34,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy installed packages from builder
 COPY --from=builder /root/.local /home/aethera/.local
+
+# Copy sqlcipher shared library from builder stage
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libsqlcipher* /usr/lib/x86_64-linux-gnu/
 
 # Copy application code into orchestrator subdirectory so that
 # `from orchestrator.router import...` resolves correctly

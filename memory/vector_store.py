@@ -195,6 +195,56 @@ class VectorStore:
             # Return zero vector as fallback
             return [0.0] * 768
 
+    async def add_documents_batch(
+        self,
+        collection: str,
+        contents: List[str],
+        metadatas: Optional[List[Dict[str, Any]]] = None,
+        doc_ids: Optional[List[str]] = None
+    ) -> List[str]:
+        """
+        Add multiple documents to the vector store in batch.
+
+        Args:
+            collection: Collection name
+            contents: List of document text contents
+            metadatas: Optional list of metadata dicts
+            doc_ids: Optional list of document IDs
+
+        Returns:
+            List of document IDs
+        """
+        if not contents:
+            return []
+
+        if metadatas is None:
+            metadatas = [{} for _ in contents]
+        if doc_ids is None:
+            doc_ids = [hashlib.sha256(c.encode()).hexdigest()[:16] for c in contents]
+
+        # Generate embeddings in batch
+        embeddings = []
+        for content in contents:
+            emb = await self._generate_embedding(content)
+            embeddings.append(emb)
+
+        # Add all to ChromaDB in one request
+        try:
+            collection_id = self._collections.get(collection, collection)
+            await self._session.post(
+                f"/api/v1/collections/{collection_id}/add",
+                json={
+                    "ids": doc_ids,
+                    "embeddings": embeddings,
+                    "documents": contents,
+                    "metadatas": metadatas
+                }
+            )
+        except Exception as e:
+            raise Exception(f"Failed to add documents batch: {e}")
+
+        return doc_ids
+
     async def delete_document(self, collection: str, doc_id: str) -> bool:
         """Delete a document by ID."""
         try:

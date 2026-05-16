@@ -46,7 +46,6 @@ const SEGMENT_DEFINITIONS = {
   DTM: { name: 'Date/Time Reference', description: 'Identifies a date/time reference' },
   ID: { name: 'Identification', description: 'Identifies an entity by code' },
   HL: { name: 'Hierarchical Level', description: 'Identifies a hierarchical level' },
-  PRV: { name: 'Provider Information', description: 'Identifies provider information' },
 };
 
 const TRANSACTION_SET_NAMES = {

@@ -301,8 +301,9 @@ class ModelCascade:
         ],
     }
 
-    def __init__(self, redis_url: str = "redis://localhost:6379"):
+    def __init__(self, redis_url: str = "redis://localhost:6379", config: Optional[CascadeConfig] = None):
         self.redis_url = redis_url
+        self.config = config or CascadeConfig()
         self.redis_client: Optional[redis.Redis] = None
         self._session_start: Optional[datetime] = None
         self._weekly_start: Optional[datetime] = None
@@ -393,16 +394,16 @@ class ModelCascade:
             is_exhausted = limit <= 0
             reset_time = min(session_reset, weekly_reset)
             percentage = max(
-                (session_usage / 100) * 100,
-                (weekly_usage / 500) * 100
+                (session_usage / self.config.ollama_cloud_session_limit) * 100,
+                (weekly_usage / self.config.ollama_cloud_weekly_limit) * 100
             )
 
         elif provider == ProviderType.HUGGINGFACE:
             daily_usage = await self._get_usage(provider, "daily")
-            limit = 1000 - daily_usage
+            limit = self.config.huggingface_daily_limit - daily_usage
             is_exhausted = limit <= 0
             reset_time = daily_reset
-            percentage = (daily_usage / 1000) * 100
+            percentage = (daily_usage / self.config.huggingface_daily_limit) * 100
 
         else:  # Local models - unlimited
             return True, RateLimitStatus(
@@ -446,11 +447,11 @@ class ModelCascade:
 
     def _get_remaining_session_limit(self, current_usage: int) -> int:
         """Get remaining session limit."""
-        return max(0, 100 - current_usage)
+        return max(0, self.config.ollama_cloud_session_limit - current_usage)
 
     def _get_remaining_weekly_limit(self, current_usage: int) -> int:
         """Get remaining weekly limit."""
-        return max(0, 500 - current_usage)
+        return max(0, self.config.ollama_cloud_weekly_limit - current_usage)
 
     async def select_model(
         self,
@@ -632,23 +633,23 @@ class ModelCascade:
             "ollama_cloud": {
                 "session": {
                     "used": ollama_session,
-                    "limit": 100,
-                    "remaining": 100 - ollama_session,
-                    "percentage": (ollama_session / 100) * 100
+                    "limit": self.config.ollama_cloud_session_limit,
+                    "remaining": self.config.ollama_cloud_session_limit - ollama_session,
+                    "percentage": (ollama_session / self.config.ollama_cloud_session_limit) * 100
                 },
                 "weekly": {
                     "used": ollama_weekly,
-                    "limit": 500,
-                    "remaining": 500 - ollama_weekly,
-                    "percentage": (ollama_weekly / 500) * 100
+                    "limit": self.config.ollama_cloud_weekly_limit,
+                    "remaining": self.config.ollama_cloud_weekly_limit - ollama_weekly,
+                    "percentage": (ollama_weekly / self.config.ollama_cloud_weekly_limit) * 100
                 }
             },
             "huggingface": {
                 "daily": {
                     "used": hf_daily,
-                    "limit": 1000,
-                    "remaining": 1000 - hf_daily,
-                    "percentage": (hf_daily / 1000) * 100
+                    "limit": self.config.huggingface_daily_limit,
+                    "remaining": self.config.huggingface_daily_limit - hf_daily,
+                    "percentage": (hf_daily / self.config.huggingface_daily_limit) * 100
                 }
             },
             "local": {

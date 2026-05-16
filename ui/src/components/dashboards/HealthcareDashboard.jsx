@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../utils/api';
 import SpecialistBadge from '../specialists/SpecialistBadge';
-import ConfidenceBadge from '../common/ConfidenceBadge';
 
 export default function HealthcareDashboard() {
   const [stats, setStats] = useState({

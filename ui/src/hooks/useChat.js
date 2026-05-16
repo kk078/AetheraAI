@@ -13,6 +13,10 @@ export function useChat(options = {}) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const abortControllerRef = useRef(null);
+  const messagesRef = useRef(initialMessages);
+
+  // Keep ref in sync with state
+  messagesRef.current = messages;
 
   const sendMessage = useCallback(async (content, additionalOptions = {}) => {
     const userMessage = {
@@ -22,19 +26,19 @@ export function useChat(options = {}) {
       timestamp: new Date().toISOString(),
     };
 
-    setMessages((prev) => [...prev, userMessage]);
+    const updatedMessages = [...messagesRef.current, userMessage];
+    setMessages(updatedMessages);
     setIsLoading(true);
     setError(null);
-
-    const allMessages = [...messages, userMessage];
 
     try {
       abortControllerRef.current = new AbortController();
 
-      const stream = api.streamChat(allMessages, {
+      const stream = api.streamChat(content, {
         specialist: additionalOptions.specialist || specialist,
         model: additionalOptions.model,
         stream: true,
+        signal: abortControllerRef.current.signal,
       });
 
       const assistantMessage = {
@@ -116,7 +120,7 @@ export function useChat(options = {}) {
       setIsLoading(false);
       abortControllerRef.current = null;
     }
-  }, [messages, specialist, onMessage, onError]);
+  }, [specialist, onMessage, onError]);
 
   const loadConversation = useCallback(async (conversationId) => {
     try {
@@ -152,11 +156,11 @@ export function useChat(options = {}) {
   }, []);
 
   const retry = useCallback(async () => {
-    const lastUserMessage = messages.filter((m) => m.role === 'user').pop();
+    const lastUserMessage = messagesRef.current.filter((m) => m.role === 'user').pop();
     if (lastUserMessage) {
       await sendMessage(lastUserMessage.content);
     }
-  }, [messages, sendMessage]);
+  }, [sendMessage]);
 
   return {
     messages,

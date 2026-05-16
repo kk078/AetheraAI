@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { api } from '../../utils/api';
 
 const STORAGE_KEY = 'aethera-theme';
 
@@ -25,11 +26,7 @@ export default function ThemeToggle({ size = 'md' }) {
     localStorage.setItem(STORAGE_KEY, isDark ? 'dark' : 'light');
     // Persist to API (fire-and-forget)
     try {
-      fetch('/api/settings/theme', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ theme: isDark ? 'dark' : 'light' }),
-      }).catch(() => {});
+      api.updateSettings({ theme: isDark ? 'dark' : 'light' }).catch(() => {});
     } catch {}
   }, [isDark, applyTheme]);
 

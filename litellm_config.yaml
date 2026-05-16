@@ -31,7 +31,7 @@ model_list:
   - model_name: "aethera-local-fast"
     litellm_params:
       model: "ollama/qwen3.5:4b"
-      api_base: "http://ollama:11434"
+      api_base: "http://host.docker.internal:11434"
       stream: true
       timeout: 30s
     model_info:
@@ -44,7 +44,7 @@ model_list:
   - model_name: "aethera-local-tools"
     litellm_params:
       model: "ollama/gemma4:e2b"
-      api_base: "http://ollama:11434"
+      api_base: "http://host.docker.internal:11434"
       stream: true
       timeout: 30s
     model_info:
@@ -57,7 +57,7 @@ model_list:
   - model_name: "aethera-local-smart"
     litellm_params:
       model: "ollama/qwen3.5:9b"
-      api_base: "http://ollama:11434"
+      api_base: "http://host.docker.internal:11434"
       stream: true
       timeout: 60s
     model_info:
@@ -70,7 +70,7 @@ model_list:
   - model_name: "aethera-embed"
     litellm_params:
       model: "ollama/nomic-embed-text"
-      api_base: "http://ollama:11434"
+      api_base: "http://host.docker.internal:11434"
     model_info:
       description: "Local embedding model for RAG — nomic-embed-text"
       mode: "embedding"
@@ -211,21 +211,21 @@ model_list:
   # CUSTOM ENDPOINT — User-configurable OpenAI-compatible endpoint
   # Set CUSTOM_API_BASE, CUSTOM_MODEL_NAME, CUSTOM_API_KEY in .env
   # Examples: Groq, Cerebras, SambaNova, local Ollama on another machine
-  # NOTE: LiteLLM requires the model name to be known at config load time.
-  # If CUSTOM_MODEL_NAME is empty, this entry is skipped automatically.
+  # IMPORTANT: LiteLLM does NOT skip model entries with empty env vars.
   # To activate, set all three CUSTOM_ variables in .env, then restart litellm.
+  # When not in use, keep this section commented out to avoid startup errors.
   # ==========================================================================
-  - model_name: "custom-endpoint"
-    litellm_params:
-      model: "openai/custom"
-      api_base: "os.environ/CUSTOM_API_BASE"
-      api_key: "os.environ/CUSTOM_API_KEY"
-      stream: true
-      timeout: 60s
-    model_info:
-      description: "User-configured custom endpoint — set CUSTOM_ vars in .env"
-      mode: "chat"
-      usage_level: "L1-light"
+  # - model_name: "custom-endpoint"
+  #   litellm_params:
+  #     model: "openai/custom"
+  #     api_base: "os.environ/CUSTOM_API_BASE"
+  #     api_key: "os.environ/CUSTOM_API_KEY"
+  #     stream: true
+  #     timeout: 60s
+  #   model_info:
+  #     description: "User-configured custom endpoint — set CUSTOM_ vars in .env"
+  #     mode: "chat"
+  #     usage_level: "L1-light"
 
 # =============================================================================
 # ROUTER SETTINGS — Intelligent routing with fallbacks and rate limit tracking
@@ -254,7 +254,7 @@ router_settings:
     - "hf-qwen-72b": ["hf-mistral", "aethera-local-smart"]
     - "hf-mistral": ["aethera-local-smart"]
 
-  set_verbose: true
+  set_verbose: false
   track_cost: true
 
 # =============================================================================

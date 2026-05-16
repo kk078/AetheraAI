@@ -5,7 +5,28 @@
 /* Aethera AI - Global Styles */
 
 :root {
-  /* Dark mode (default) */
+  /* Dark mode (default) — RGB channels for Tailwind alpha support */
+  --color-bg-primary: 13 17 23;
+  --color-bg-secondary: 22 27 34;
+  --color-bg-tertiary: 33 38 45;
+  --color-text-primary: 230 237 243;
+  --color-text-secondary: 139 148 158;
+  --color-border: 48 54 61;
+  --color-border-hover: 72 79 88;
+}
+
+.light {
+  --color-bg-primary: 250 251 252;
+  --color-bg-secondary: 255 255 255;
+  --color-bg-tertiary: 246 248 250;
+  --color-text-primary: 31 41 55;
+  --color-text-secondary: 107 114 128;
+  --color-border: 229 231 235;
+  --color-border-hover: 209 213 219;
+}
+
+/* Fallback hex variables for non-Tailwind CSS */
+:root {
   --bg-primary: #0D1117;
   --bg-secondary: #161B22;
   --bg-tertiary: #21262D;
@@ -16,6 +37,7 @@
   --success: #10B981;
   --error: #F43F5E;
   --border: #30363D;
+  --border-hover: #484F58;
 }
 
 .light {
@@ -29,6 +51,7 @@
   --success: #10B981;
   --error: #F43F5E;
   --border: #E5E7EB;
+  --border-hover: #D1D5DB;
 }
 
 * {
@@ -188,4 +211,17 @@ code, pre {
 @keyframes shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
+}
+
+/* Focus styles for accessibility */
+*:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+/* Smooth transitions for theme changes */
+body, .theme-transition, .theme-transition *,
+.theme-transition *::before,
+.theme-transition *::after {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
 }

@@ -25,6 +25,39 @@ from pydantic import BaseModel
 
 logger = logging.getLogger("aethera.audit")
 
+# ---------------------------------------------------------------------------
+# PC Control Action Types
+# ---------------------------------------------------------------------------
+
+PC_CONTROL_ACTIONS = {
+    "pc_control.filesystem.browse": "Browse filesystem directory",
+    "pc_control.filesystem.read": "Read file contents",
+    "pc_control.filesystem.write": "Write/create file",
+    "pc_control.filesystem.delete": "Delete file or directory",
+    "pc_control.filesystem.move": "Move file or directory",
+    "pc_control.filesystem.rename": "Rename file or directory",
+    "pc_control.filesystem.search": "Search filesystem",
+    "pc_control.filesystem.mkdir": "Create directory",
+    "pc_control.app.open": "Open application",
+    "pc_control.app.close": "Close application",
+    "pc_control.app.list": "List running processes",
+    "pc_control.app.switch": "Switch active window",
+    "pc_control.shell.execute": "Execute shell command",
+    "pc_control.screen.capture": "Capture screenshot",
+    "pc_control.screen.ocr": "OCR screen content",
+    "pc_control.clipboard.read": "Read clipboard content",
+    "pc_control.clipboard.write": "Write to clipboard",
+    "pc_control.browser.navigate": "Navigate browser to URL",
+    "pc_control.browser.extract": "Extract data from web page",
+    "pc_control.browser.screenshot": "Browser screenshot",
+    "pc_control.browser.fill": "Fill form field in browser",
+    "pc_control.browser.click": "Click element in browser",
+    "pc_control.system.stats": "System statistics",
+    "pc_control.confirmation.approved": "Safety confirmation approved",
+    "pc_control.confirmation.denied": "Safety confirmation denied",
+    "pc_control.confirmation.timeout": "Safety confirmation timed out",
+}
+
 AUDIT_DB_PATH = os.getenv("AUDIT_DB_PATH", "./data/aethera_audit.db")
 AUDIT_EXPORT_DIR = os.getenv("AUDIT_EXPORT_DIR", "./data/audit_exports")
 AUDIT_RETENTION_DAYS = int(os.getenv("AUDIT_RETENTION_DAYS", "2555"))  # 7 years for HIPAA
@@ -518,6 +551,23 @@ async def health():
         "service": "aethera-audit-logger",
         "entries": db.get_entry_count(),
     }
+
+
+@app.get("/audit/pc_control")
+async def get_pc_control_audit(limit: int = Query(100, ge=1, le=1000)):
+    """Get all PC control audit entries."""
+    db = get_audit_db()
+    query = AuditQuery(action="pc_control.", limit=limit)
+    results = db.query(query)
+    # Filter for action prefix match since AuditQuery uses exact match
+    with db._connect() as conn:
+        rows = conn.execute(
+            """SELECT * FROM audit_log
+               WHERE action LIKE 'pc_control.%'
+               ORDER BY timestamp DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    return {"entries": [dict(r) for r in rows], "count": len(rows)}
 
 
 @app.on_event("startup")

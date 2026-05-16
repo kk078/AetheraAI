@@ -1,4 +1,4 @@
-FROM node:18-alpine AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -7,9 +7,6 @@ RUN npm install
 
 COPY . .
 
-# Copy index.html from public to root for Vite build
-COPY public/index.html ./index.html
-
 RUN npm run build
 
 FROM nginx:alpine
@@ -17,6 +14,6 @@ FROM nginx:alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-EXPOSE 3000
+EXPOSE 80
 
 CMD ["nginx", "-g", "daemon off;"]

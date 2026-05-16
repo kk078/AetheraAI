@@ -8,15 +8,18 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Aethera brand colors
+        // Aethera brand colors — using CSS variables for theme switching
         aethera: {
-          primary: '#06B6D4',    // Teal - healthcare trust
-          secondary: '#F59E0B',  // Amber - alerts
-          success: '#10B981',    // Emerald
-          error: '#F43F5E',      // Rose
-          background: '#0D1117', // Deep charcoal (dark mode)
-          surface: '#161B22',    // Card background
-          foreground: '#E6EDF3', // Text (dark mode)
+          primary: '#06B6D4',       // Teal - healthcare trust
+          secondary: '#F59E0B',     // Amber - alerts
+          success: '#10B981',       // Emerald
+          error: '#F43F5E',         // Rose
+          background: 'rgb(var(--color-bg-primary) / <alpha-value>)',
+          surface: 'rgb(var(--color-bg-secondary) / <alpha-value>)',
+          foreground: 'rgb(var(--color-text-primary) / <alpha-value>)',
+          tertiary: 'rgb(var(--color-bg-tertiary) / <alpha-value>)',
+          'text-secondary': 'rgb(var(--color-text-secondary) / <alpha-value>)',
+          border: 'rgb(var(--color-border) / <alpha-value>)',
         },
         // Specialist colors
         specialist: {

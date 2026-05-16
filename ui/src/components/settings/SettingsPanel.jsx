@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { api } from '../../utils/api';
 import ModelConfig from './ModelConfig';
 import ProfileEditor from './ProfileEditor';
 import PrivacySettings from './PrivacySettings';
@@ -31,11 +32,7 @@ export default function SettingsPanel() {
   const handleSaveGeneral = async () => {
     setSaving(true);
     try {
-      await fetch('/api/settings/general', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(generalSettings),
-      });
+      await api.updateSettings(generalSettings);
     } catch (err) {
       console.error('Failed to save settings:', err);
     } finally {

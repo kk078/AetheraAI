@@ -99,7 +99,7 @@ export default function CommandPalette({ onClose, onViewChange }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center pt-[20vh]" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center pt-[20vh]" onClick={onClose} role="dialog" aria-modal="true" aria-label="Command palette">
       <div
         className="w-full max-w-xl bg-aethera-surface rounded-xl shadow-2xl overflow-hidden border border-aethera-border"
         onClick={(e) => e.stopPropagation()}
@@ -112,6 +112,7 @@ export default function CommandPalette({ onClose, onViewChange }) {
             onChange={(e) => { setSearch(e.target.value); setSelectedIndex(0); }}
             placeholder="Type a command or search..."
             autoFocus
+            aria-label="Search commands"
             className="w-full bg-transparent border-none outline-none text-aethera-foreground placeholder-aethera-text-secondary"
           />
         </div>

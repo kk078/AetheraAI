@@ -1,10 +1,14 @@
 import React from 'react';
 import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import SpecialistBadge from '../specialists/SpecialistBadge';
 import ConfidenceBadge from '../common/ConfidenceBadge';
 
 export default function MessageBubble({ message }) {
   const isUser = message.role === 'user';
+
+  const rawHtml = marked.parse(message.content || '', { async: false }) || '';
+  const safeHtml = DOMPurify.sanitize(rawHtml);
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -33,7 +37,7 @@ export default function MessageBubble({ message }) {
             }
             text-sm leading-relaxed
           `}
-          dangerouslySetInnerHTML={{ __html: marked.parse(message.content) }}
+          dangerouslySetInnerHTML={{ __html: safeHtml }}
         />
 
         {/* Timestamp */}

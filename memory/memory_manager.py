@@ -215,8 +215,7 @@ class MemoryManager:
         # 3. Health records (healthcare specialists only)
         healthcare_specialists = {
             "healthcare_provider", "healthcare_payer", "healthcare_regulatory",
-            "clinical", "pharmacy", "lab", "imaging", "mental_health",
-            "physical_therapy", "nutrition", "social_work",
+            "healthcare_clinical", "healthcare_pharmacy", "healthcare_behavioral",
         }
         if specialist in healthcare_specialists and self._health_records and total_chars < max_chars:
             try:
@@ -482,18 +481,12 @@ class MemoryManager:
             "healthcare_provider": "healthcare_knowledge",
             "healthcare_payer": "healthcare_knowledge",
             "healthcare_regulatory": "healthcare_knowledge",
-            "clinical": "healthcare_knowledge",
-            "pharmacy": "healthcare_knowledge",
-            "lab": "healthcare_knowledge",
-            "imaging": "healthcare_knowledge",
-            "mental_health": "healthcare_knowledge",
-            "physical_therapy": "healthcare_knowledge",
-            "nutrition": "healthcare_knowledge",
-            "social_work": "healthcare_knowledge",
+            "healthcare_clinical": "healthcare_knowledge",
+            "healthcare_pharmacy": "healthcare_knowledge",
+            "healthcare_behavioral": "healthcare_knowledge",
             "finance": "finance_knowledge",
             "financial": "finance_knowledge",
             "legal": "legal_knowledge",
-            "technology": "technology_knowledge",
         }
         return mapping.get(specialist)
 
@@ -582,6 +575,38 @@ class MemoryManager:
     @property
     def audit_db(self):
         return self._audit_db
+
+
+# ---------------------------------------------------------------------------
+# Singleton
+# ---------------------------------------------------------------------------
+
+    async def process_document(self, file_path: str, filename: str = "",
+                                content_type: str = "", user_id: str = "default_user") -> dict:
+        """
+        Run the auto-learning pipeline on a document.
+
+        Convenience method that invokes the pipeline and returns results.
+        """
+        try:
+            from pipeline.pipeline import run_pipeline_for_file
+            result = await run_pipeline_for_file(
+                file_path=file_path,
+                filename=filename,
+                content_type=content_type,
+            )
+            return {
+                "success": True,
+                "status": result.status,
+                "notification": result.notification,
+                "entity_count": result.entity_count,
+                "fact_count": result.fact_count,
+                "chunk_count": result.chunk_count,
+                "contradiction_count": result.contradiction_count,
+            }
+        except Exception as e:
+            logger.error(f"process_document failed: {e}")
+            return {"success": False, "error": str(e)}
 
 
 # ---------------------------------------------------------------------------

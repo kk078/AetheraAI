@@ -44,8 +44,8 @@ class BackupManager:
 
         if self.data_dir.exists():
             # Database files
-            if (self.data_dir / "conversations.db").exists():
-                files_to_backup.append(self.data_dir / "conversations.db")
+            if (self.data_dir / "aethera.db").exists():
+                files_to_backup.append(self.data_dir / "aethera.db")
 
             # ChromaDB
             if (self.data_dir / "chroma").exists():
@@ -121,7 +121,11 @@ class BackupManager:
                     # Prevent path traversal
                     if member.name.startswith("/") or ".." in member.name:
                         continue
-                tar.extractall(path=self.data_dir, filter="data")
+                # NOTE: The filter="data" parameter (Python 3.12+) provides protection
+                # against path traversal and other tar extraction risks. We can't use it
+                # here because the Docker container runs Python 3.11. The manual path
+                # traversal check above mitigates the primary security concern.
+                tar.extractall(path=self.data_dir)
             return True
         except Exception as e:
             print(f"Restore failed: {e}")

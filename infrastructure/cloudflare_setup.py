@@ -66,7 +66,7 @@ class CloudflareSetup:
         try:
             # Create tunnel
             result = subprocess.run(
-                ["cloudflared", "tunnel", "create", "--name", tunnel_name, "--json"],
+                ["cloudflared", "tunnel", "create", tunnel_name],
                 capture_output=True,
                 text=True
             )
@@ -156,9 +156,9 @@ class CloudflareSetup:
 
     def setup_access_policy(self, tunnel_id: str, allowed_emails: list) -> bool:
         """Setup Cloudflare Access policy for the tunnel."""
-        api_key = os.getenv("CLOUDFLARE_API_KEY")
+        api_key = os.getenv("CLOUDFLARE_API_TOKEN")
         if not api_key:
-            logger.warning("CLOUDFLARE_API_KEY not set, skipping access policy setup")
+            logger.warning("CLOUDFLARE_API_TOKEN not set, skipping access policy setup")
             return False
 
         account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID")

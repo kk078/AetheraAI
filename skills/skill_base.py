@@ -56,6 +56,12 @@ class AetheraSkill(ABC):
     _skill_name: str = ""
     _skill_category: str = "general"
 
+    # Skill provenance — set by creation system, defaults for built-in skills
+    _skill_version: str = "1.0.0"
+    _skill_source: str = "builtin"  # "builtin", "user_created", "auto_generated"
+    _skill_created_at: str = ""
+    _skill_updated_at: str = ""
+
     @property
     @abstractmethod
     def name(self) -> str:
@@ -130,6 +136,26 @@ class AetheraSkill(ABC):
         """
         return 0
 
+    @property
+    def version(self) -> str:
+        """Skill version. Defaults to '1.0.0'."""
+        return self._skill_version
+
+    @property
+    def source(self) -> str:
+        """Skill origin: 'builtin', 'user_created', or 'auto_generated'."""
+        return self._skill_source
+
+    @property
+    def created_at(self) -> str:
+        """ISO timestamp when this skill was created."""
+        return self._skill_created_at
+
+    @property
+    def updated_at(self) -> str:
+        """ISO timestamp when this skill was last updated."""
+        return self._skill_updated_at
+
     @abstractmethod
     async def execute(self, **kwargs) -> SkillResult:
         """
@@ -156,6 +182,11 @@ class AetheraSkill(ABC):
                 "name": self.name,
                 "description": self.description,
                 "parameters": self.parameters
+            },
+            "metadata": {
+                "version": self.version,
+                "source": self.source,
+                "category": self.category,
             }
         }
 

@@ -295,6 +295,62 @@ class KnowledgeGraph:
             print(f"Error deleting relation: {e}")
             return False
 
+    def add_entities_and_relations_batch(
+        self,
+        entities: List[Dict[str, Any]],
+        relations: List[Dict[str, Any]]
+    ) -> Dict[str, str]:
+        """
+        Add multiple entities and relations in a single transaction.
+
+        Args:
+            entities: List of dicts with keys: entity_type, name, entity_id (optional), attributes (optional)
+            relations: List of dicts with keys: source_id, relation, target_id, attributes (optional), weight (optional)
+
+        Returns:
+            Dict mapping temporary IDs to real IDs for entities
+        """
+        id_map = {}
+        now = datetime.now().isoformat()
+        try:
+            for ent in entities:
+                entity_type = ent.get("entity_type", "organization")
+                if entity_type not in ENTITY_TYPES:
+                    entity_type = "organization"
+                name = ent.get("name", "Unknown")
+                eid = ent.get("entity_id") or f"entity_{uuid.uuid4().hex[:12]}"
+                attrs = json.dumps(ent.get("attributes") or {})
+                self._conn.execute(
+                    """INSERT INTO kg_nodes (id, type, name, attributes, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(id) DO UPDATE SET
+                           name=excluded.name, type=excluded.type,
+                           attributes=excluded.attributes, updated_at=excluded.updated_at""",
+                    (eid, entity_type, name, attrs, now, now)
+                )
+                if ent.get("entity_id"):
+                    id_map[ent["entity_id"]] = eid
+
+            for rel in relations:
+                source_id = rel.get("source_id", "")
+                target_id = rel.get("target_id", "")
+                relation = rel.get("relation", "related_to")
+                if relation not in RELATION_TYPES:
+                    relation = "related_to"
+                weight = rel.get("weight", 1.0)
+                attrs = json.dumps(rel.get("attributes") or {})
+                edge_id = f"edge_{uuid.uuid4().hex[:12]}"
+                self._conn.execute(
+                    """INSERT INTO kg_edges (id, source_id, relation, target_id, attributes, weight, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (edge_id, source_id, relation, target_id, attrs, weight, now)
+                )
+
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+        return id_map
+
     # ---- Graph Traversal Operations ----
 
     def query_neighbors(

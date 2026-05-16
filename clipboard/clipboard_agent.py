@@ -19,7 +19,7 @@ from typing import Callable, Dict, List, Optional
 
 import requests
 
-from patterns import detect_codes, detect_codes_flat, list_patterns
+from clipboard.patterns import detect_codes, detect_codes_flat, list_patterns
 
 # ---------------------------------------------------------------------------
 # Configuration

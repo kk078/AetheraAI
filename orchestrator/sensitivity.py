@@ -254,7 +254,7 @@ class PHIDetector:
             else:
                 masked = original[0] + "*" * (len(original) - 2) + original[-1]
                 redaction = f"[{category.upper()}:{masked}]"
-            redacted = redacted.replace(original, redaction, 1)
+            redacted = redacted.replace(original, redaction)
         return redacted
 
     def is_safe_for_cloud(self, text: str) -> bool:

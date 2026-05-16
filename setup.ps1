@@ -30,7 +30,7 @@ $PROJECT_ROOT = $PSScriptRoot.TrimEnd('\')
 # =============================================================================
 function Write-Header {
     param([string]$Text)
-    Write-Host "`n" -NoNewline
+    Write-Host ""
     Write-Host ("=" * 72) -ForegroundColor Cyan
     Write-Host "  $Text" -ForegroundColor Cyan
     Write-Host ("=" * 72) -ForegroundColor Cyan
@@ -100,19 +100,16 @@ function Wait-For-Url {
 # BANNER
 # =============================================================================
 Clear-Host
-Write-Host @"
-
-    █████╗ ██╗   ██╗██████╗ ██████╗ ███████╗███████╗
-   ██╔══██╗██║   ██║██╔══██╗██╔══██╗██╔════╝██╔════╝
-   ███████║██║   ██║██████╔╝██████╔╝█████╗  ███████╗
-   ██╔══██║██║   ██║██╔══██╗██╔══██╗██╔══╝  ╚════██║
-   ██║  ██║╚██████╔╝██████╔╝██████╔╝███████╗███████║
-   ╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝╚══════╝
-
-   Personal Healthcare AI Super Agent
-   Setting up Aethera AI...
-
-"@ -ForegroundColor Cyan
+Write-Host ""
+Write-Host "    AAAAAA  EEEEE  TTTTT  H   H  EEEEE  RRRR   AAAAAA" -ForegroundColor Cyan
+Write-Host "   A    A  E        T    H   H  E      R   R  A    A" -ForegroundColor Cyan
+Write-Host "   AAAAAA  EEEE     T    HHHHH  EEEE   RRRR   AAAAAA" -ForegroundColor Cyan
+Write-Host "   A    A  E        T    H   H  E      R  R   A    A" -ForegroundColor Cyan
+Write-Host "   A    A  EEEEE    T    H   H  EEEEE  R   R  A    A" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "   Personal Healthcare AI Super Agent" -ForegroundColor Cyan
+Write-Host "   Setting up Aethera AI..." -ForegroundColor Cyan
+Write-Host ""
 
 # =============================================================================
 # 1. PREREQUISITES CHECK
@@ -159,7 +156,7 @@ if (-not $SkipPrerequisites) {
             Write-Success "WSL2 backend is active"
         } else {
             Write-Warn "Could not confirm WSL2 backend. Docker Desktop should use WSL2 by default."
-            Write-Info "  Verify: Docker Desktop > Settings > General > 'Use the WSL 2 based engine'"
+            Write-Info "  Verify: Docker Desktop > Settings > General > Use the WSL 2 based engine"
         }
     } catch {
         Write-Warn "WSL status check failed. This is OK if Docker is running correctly."
@@ -282,12 +279,14 @@ if (-not $SkipPrerequisites) {
 # 2. CONFIGURATION
 # =============================================================================
 Write-Header "Step 2: Configuration"
-Write-Host "Enter your configuration. Press Enter for defaults where applicable.`n"
+Write-Host "Enter your configuration. Press Enter for defaults where applicable."
+Write-Host ""
 
 # --- Ollama Cloud API Key (REQUIRED) ---
 Write-Host "----------------------------------------" -ForegroundColor Gray
 Write-Host "OLLAMA CLOUD API KEY [REQUIRED]" -ForegroundColor Yellow
-Write-Host "Get your key: https://ollama.com/settings/api`n"
+Write-Host "Get your key: https://ollama.com/settings/api"
+Write-Host ""
 $OLLAMA_API_KEY = Read-Host "  Enter OLLAMA_API_KEY"
 while ([string]::IsNullOrWhiteSpace($OLLAMA_API_KEY)) {
     Write-Err "OLLAMA_API_KEY is required for cloud models."
@@ -295,15 +294,18 @@ while ([string]::IsNullOrWhiteSpace($OLLAMA_API_KEY)) {
 }
 
 # --- HuggingFace Token (OPTIONAL) ---
-Write-Host "`n----------------------------------------" -ForegroundColor Gray
+Write-Host ""
+Write-Host "----------------------------------------" -ForegroundColor Gray
 Write-Host "HUGGINGFACE TOKEN [OPTIONAL]" -ForegroundColor Yellow
 Write-Host "Free tier works without token. Higher limits with free account."
 $HF_TOKEN = Read-Host "  Enter HF_TOKEN (or press Enter to skip)"
 
 # --- Cloudflare (OPTIONAL) ---
-Write-Host "`n----------------------------------------" -ForegroundColor Gray
+Write-Host ""
+Write-Host "----------------------------------------" -ForegroundColor Gray
 Write-Host "CLOUDFLARE CONFIGURATION [OPTIONAL]" -ForegroundColor Yellow
-Write-Host "For remote access via Cloudflare Tunnel.`n"
+Write-Host "For remote access via Cloudflare Tunnel."
+Write-Host ""
 $CLOUDFLARE_API_TOKEN = Read-Host "  Enter CLOUDFLARE_API_TOKEN (or press Enter to skip)"
 $CLOUDFLARE_ACCOUNT_ID = ""
 $CLOUDFLARE_DOMAIN = ""
@@ -313,18 +315,21 @@ if (-not [string]::IsNullOrWhiteSpace($CLOUDFLARE_API_TOKEN)) {
 }
 
 # --- GitHub (OPTIONAL) ---
-Write-Host "`n----------------------------------------" -ForegroundColor Gray
+Write-Host ""
+Write-Host "----------------------------------------" -ForegroundColor Gray
 Write-Host "GITHUB TOKEN [OPTIONAL]" -ForegroundColor Yellow
 $GITHUB_TOKEN = Read-Host "  Enter GITHUB_TOKEN (or press Enter to skip)"
 
 # --- User Preferences ---
-Write-Host "`n----------------------------------------" -ForegroundColor Gray
+Write-Host ""
+Write-Host "----------------------------------------" -ForegroundColor Gray
 Write-Host "USER PREFERENCES" -ForegroundColor Yellow
 $USER_TIMEZONE = Read-Host "  Enter USER_TIMEZONE (default: America/New_York)"
 if ([string]::IsNullOrWhiteSpace($USER_TIMEZONE)) { $USER_TIMEZONE = "America/New_York" }
 
 $USER_LOCATION = Read-Host "  Enter USER_LOCATION for weather (city or lat,lon)"
 $DEFAULT_SPECIALIST = Read-Host "  Enter DEFAULT_SPECIALIST (default: general)"
+if ([string]::IsNullOrWhiteSpace($DEFAULT_SPECIALIST)) { $DEFAULT_SPECIALIST = "general" }
 
 # --- Generate encryption key ---
 Write-Step "Generating encryption key..."
@@ -336,38 +341,38 @@ Write-Success "Encryption key generated"
 # =============================================================================
 Write-Header "Step 3: Creating .env File"
 
-$envContent = @"
-# Aethera AI Environment Configuration
-# Generated by setup.ps1 on $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+$envLines = @(
+    "# Aethera AI Environment Configuration",
+    "# Generated by setup.ps1 on $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')",
+    "",
+    "# === REQUIRED ===",
+    "ENCRYPTION_KEY=$ENCRYPTION_KEY",
+    "OLLAMA_API_KEY=$OLLAMA_API_KEY",
+    "",
+    "# === OPTIONAL ===",
+    "HF_TOKEN=$HF_TOKEN",
+    "CLOUDFLARE_API_TOKEN=$CLOUDFLARE_API_TOKEN",
+    "CLOUDFLARE_ACCOUNT_ID=$CLOUDFLARE_ACCOUNT_ID",
+    "CLOUDFLARE_DOMAIN=$CLOUDFLARE_DOMAIN",
+    "GITHUB_TOKEN=$GITHUB_TOKEN",
+    "",
+    "# === PREFERENCES ===",
+    "USER_TIMEZONE=$USER_TIMEZONE",
+    "USER_LOCATION=$USER_LOCATION",
+    "DEFAULT_SPECIALIST=$DEFAULT_SPECIALIST",
+    "",
+    "# === INTERNAL (do not change) ===",
+    "DATABASE_URL=sqlite+aiosqlite:///data/aethera.db",
+    "REDIS_URL=redis://redis:6379",
+    "CHROMADB_URL=http://chromadb:8000",
+    "LITELLM_URL=http://litellm:4000",
+    "OLLAMA_URL=http://host.docker.internal:11434",
+    "SEARXNG_URL=http://searxng:8080",
+    "VITE_API_URL=http://localhost:8000",
+    "VITE_WS_URL=ws://localhost:8000/ws"
+)
 
-# === REQUIRED ===
-ENCRYPTION_KEY=$ENCRYPTION_KEY
-OLLAMA_API_KEY=$OLLAMA_API_KEY
-
-# === OPTIONAL ===
-HF_TOKEN=$HF_TOKEN
-CLOUDFLARE_API_TOKEN=$CLOUDFLARE_API_TOKEN
-CLOUDFLARE_ACCOUNT_ID=$CLOUDFLARE_ACCOUNT_ID
-CLOUDFLARE_DOMAIN=$CLOUDFLARE_DOMAIN
-GITHUB_TOKEN=$GITHUB_TOKEN
-
-# === PREFERENCES ===
-USER_TIMEZONE=$USER_TIMEZONE
-USER_LOCATION=$USER_LOCATION
-DEFAULT_SPECIALIST=$DEFAULT_SPECIALIST
-
-# === INTERNAL (do not change) ===
-DATABASE_URL=sqlite+aiosqlite:///data/aethera.db
-REDIS_URL=redis://redis:6379
-CHROMADB_URL=http://chromadb:8000
-LITELLM_URL=http://litellm:4000
-OLLAMA_URL=http://ollama:11434
-SEARXNG_URL=http://searxng:8080
-VITE_API_URL=http://localhost:8000
-VITE_WS_URL=ws://localhost:8000/ws
-"@
-
-Set-Content -Path "$PROJECT_ROOT\.env" -Value $envContent -Encoding UTF8
+$envLines -join "`r`n" | Set-Content -Path "$PROJECT_ROOT\.env" -Encoding UTF8
 Write-Success ".env file created at $PROJECT_ROOT\.env"
 
 # =============================================================================
@@ -375,7 +380,7 @@ Write-Success ".env file created at $PROJECT_ROOT\.env"
 # =============================================================================
 Write-Header "Step 4: Creating Docker Volumes"
 Write-Step "Creating persistent volumes..."
-$volumes = @("aethera-data", "ollama-models", "chroma-data", "redis-data", "searxng-data", "voice-models")
+$volumes = @("aethera-data", "chroma-data", "redis-data", "searxng-data", "voice-models")
 foreach ($vol in $volumes) {
     docker volume create $vol 2>$null | Out-Null
     Write-Success "Volume: $vol"
@@ -408,7 +413,7 @@ if (-not $SkipBuild) {
     Write-Step "Building voice image..."
     docker compose -f "$PROJECT_ROOT\docker-compose.yml" -f "$PROJECT_ROOT\docker-compose.override.yml" build voice
     if ($LASTEXITCODE -ne 0) {
-        Write-Warn "Voice image build failed — voice features will be disabled."
+        Write-Warn "Voice image build failed - voice features will be disabled."
         Write-Info "You can rebuild later with: docker compose build voice"
     } else {
         Write-Success "Voice image built"
@@ -429,7 +434,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Success "Docker Compose services started"
 
 Write-Step "Waiting for services to initialize..."
-Write-Info "This takes ~30-60 seconds on first start..."
+Write-Info "This takes 30-60 seconds on first start..."
 
 # =============================================================================
 # 7. PULL LOCAL OLLAMA MODELS
@@ -437,11 +442,13 @@ Write-Info "This takes ~30-60 seconds on first start..."
 if (-not $SkipModelPull) {
     Write-Header "Step 7: Pulling Local Ollama Models"
 
-    Write-Step "Waiting for Ollama to be ready..."
-    $ollamaReady = Wait-For-Url -Url "http://localhost:11434/api/tags" -TimeoutSeconds 120 -Description "Ollama"
+    Write-Step "Checking Ollama on host..."
+    $ollamaReady = Wait-For-Url -Url "http://localhost:11434/api/tags" -TimeoutSeconds 30 -Description "Ollama"
     if (-not $ollamaReady) {
-        Write-Warn "Ollama did not become ready within 120 seconds."
-        Write-Info "Models will be pulled on first use, or run: docker compose restart ollama"
+        Write-Warn "Ollama is not running on this machine."
+        Write-Info "  Install Ollama: https://ollama.com/download"
+        Write-Info "  Then run: ollama serve"
+        Write-Info "  After Ollama is running, pull models manually:"
     } else {
         Write-Success "Ollama is ready"
 
@@ -455,16 +462,16 @@ if (-not $SkipModelPull) {
         foreach ($model in $models) {
             Write-Step "Pulling $($model.Name) ($($model.Desc))..."
             try {
-                $pullResult = docker exec aethera-ollama ollama pull $model.Name 2>&1
+                $pullResult = ollama pull $model.Name 2>&1
                 if ($LASTEXITCODE -eq 0) {
                     Write-Success "$($model.Name) pulled"
                 } else {
                     Write-Warn "Failed to pull $($model.Name). Will try on first use."
-                    Write-Info "  Manual pull: docker exec aethera-ollama ollama pull $($model.Name)"
+                    Write-Info "  Manual pull: ollama pull $($model.Name)"
                 }
             } catch {
                 Write-Warn "Error pulling $($model.Name): $_"
-                Write-Info "  Manual pull: docker exec aethera-ollama ollama pull $($model.Name)"
+                Write-Info "  Manual pull: ollama pull $($model.Name)"
             }
         }
     }
@@ -476,14 +483,14 @@ if (-not $SkipModelPull) {
 Write-Header "Step 8: Verifying Services"
 
 $services = @(
-    @{Name = "Redis";       Url = "http://localhost:6379";     Check = { try { redis-cli -h localhost ping 2>$null } catch { Invoke-WebRequest -Uri "http://localhost:6379" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop } }; Port = 6379}
-    @{Name = "SearXNG";     Url = "http://localhost:8888/healthz"; Port = 8888}
-    @{Name = "Ollama";      Url = "http://localhost:11434/api/tags"; Port = 11434}
-    @{Name = "ChromaDB";    Url = "http://localhost:8001/api/v1/heartbeat"; Port = 8001}
-    @{Name = "LiteLLM";     Url = "http://localhost:4000/health"; Port = 4000}
-    @{Name = "Orchestrator"; Url = "http://localhost:8000/api/health"; Port = 8000}
-    @{Name = "Voice";       Url = "http://localhost:8500/health"; Port = 8500}
-    @{Name = "UI";          Url = "http://localhost:3000"; Port = 3000}
+    @{Name = "Redis";        Url = "http://localhost:6379";              Port = 6379}
+    @{Name = "SearXNG";      Url = "http://localhost:8888/healthz";      Port = 8888}
+    @{Name = "Ollama";       Url = "http://localhost:11434/api/tags";    Port = 11434}
+    @{Name = "ChromaDB";     Url = "http://localhost:8001/api/v1/heartbeat"; Port = 8001}
+    @{Name = "LiteLLM";      Url = "http://localhost:4000/health";       Port = 4000}
+    @{Name = "Orchestrator";  Url = "http://localhost:8000/api/health";   Port = 8000}
+    @{Name = "Voice";        Url = "http://localhost:8500/health";       Port = 8500}
+    @{Name = "UI";           Url = "http://localhost:3000";              Port = 3000}
 )
 
 $allHealthy = $true
@@ -493,13 +500,26 @@ foreach ($svc in $services) {
         $response = Invoke-WebRequest -Uri $svc.Url -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
         Write-Success "$($svc.Name) is healthy"
     } catch {
-        Write-Warn "$($svc.Name) is not ready yet (this may take a few minutes on first start)"
-        $allHealthy = $false
+        # Redis does not respond to HTTP — check via TCP instead
+        if ($svc.Name -eq "Redis") {
+            try {
+                $tcp = New-Object System.Net.Sockets.TcpClient
+                $tcp.Connect("localhost", 6379)
+                $tcp.Close()
+                Write-Success "$($svc.Name) is healthy (TCP)"
+            } catch {
+                Write-Warn "$($svc.Name) is not ready yet"
+                $allHealthy = $false
+            }
+        } else {
+            Write-Warn "$($svc.Name) is not ready yet (this may take a few minutes on first start)"
+            $allHealthy = $false
+        }
     }
 }
 
 # Show container status
-Write-Host "`n" -NoNewline
+Write-Host ""
 Write-Step "Container status:"
 docker compose -f "$PROJECT_ROOT\docker-compose.yml" -f "$PROJECT_ROOT\docker-compose.override.yml" ps
 
@@ -508,51 +528,46 @@ docker compose -f "$PROJECT_ROOT\docker-compose.yml" -f "$PROJECT_ROOT\docker-co
 # =============================================================================
 Write-Header "Setup Complete!"
 
-$accessInfo = @"
-
-  Aethera AI is ready!
-
-  LOCAL URL:   http://localhost:3000   (Web UI)
-  API URL:     http://localhost:8000   (REST API)
-  Ollama API:  http://localhost:11434  (Local models)
-  LiteLLM:     http://localhost:4000   (Model proxy)
-  SearXNG:     http://localhost:8888   (Search engine)
-  Redis:       localhost:6379
-  ChromaDB:    http://localhost:8001   (Vector DB)
-  Voice API:   http://localhost:8500   (STT/TTS)
-
-"@
-
-Write-Host $accessInfo -ForegroundColor Green
+Write-Host ""
+Write-Host "  Aethera AI is ready!" -ForegroundColor Green
+Write-Host ""
+Write-Host "  LOCAL URL:   http://localhost:3000   (Web UI)" -ForegroundColor Green
+Write-Host "  API URL:     http://localhost:8000   (REST API)" -ForegroundColor Green
+Write-Host "  Ollama API:  http://localhost:11434  (Local models)" -ForegroundColor Green
+Write-Host "  LiteLLM:     http://localhost:4000   (Model proxy)" -ForegroundColor Green
+Write-Host "  SearXNG:     http://localhost:8888   (Search engine)" -ForegroundColor Green
+Write-Host "  Redis:       localhost:6379" -ForegroundColor Green
+Write-Host "  ChromaDB:    http://localhost:8001   (Vector DB)" -ForegroundColor Green
+Write-Host "  Voice API:   http://localhost:8500   (STT/TTS)" -ForegroundColor Green
+Write-Host ""
 
 if (-not [string]::IsNullOrWhiteSpace($CLOUDFLARE_DOMAIN)) {
-    Write-Host "  TUNNEL URL:  https://$CLOUDFLARE_DOMAIN`n" -ForegroundColor Green
+    Write-Host "  TUNNEL URL:  https://$($CLOUDFLARE_DOMAIN)" -ForegroundColor Green
+    Write-Host ""
 }
 
 if (-not $allHealthy) {
     Write-Host "  NOTE: Some services are still starting. Wait 1-2 minutes and check:" -ForegroundColor Yellow
     Write-Host "    docker compose ps" -ForegroundColor Yellow
-    Write-Host "    docker compose logs <service-name>`n" -ForegroundColor Yellow
+    Write-Host "    docker compose logs [service-name]" -ForegroundColor Yellow
+    Write-Host ""
 }
 
-$nextSteps = @"
-  NEXT STEPS:
-    1. Open http://localhost:3000 in your browser
-    2. Start chatting with Aethera!
-    3. If GPU passthrough didn't work, models will run on CPU (slower but functional)
+Write-Host "  NEXT STEPS:" -ForegroundColor Cyan
+Write-Host "    1. Open http://localhost:3000 in your browser" -ForegroundColor White
+Write-Host "    2. Start chatting with Aethera!" -ForegroundColor White
+Write-Host "    3. If GPU passthrough did not work, models run on CPU (slower but functional)" -ForegroundColor White
+Write-Host ""
+Write-Host "  USEFUL COMMANDS:" -ForegroundColor Cyan
+Write-Host "    Stop Aethera:     docker compose down" -ForegroundColor White
+Write-Host "    Restart:          docker compose restart" -ForegroundColor White
+Write-Host "    View logs:        docker compose logs -f" -ForegroundColor White
+Write-Host "    View one service: docker compose logs -f orchestrator" -ForegroundColor White
+Write-Host "    Pull models:      ollama pull [model]" -ForegroundColor White
+Write-Host "    Check health:     docker compose ps" -ForegroundColor White
+Write-Host "    Rebuild:          docker compose build" -ForegroundColor White
+Write-Host "    Full reset:       docker compose down -v  (WARNING: deletes all data)" -ForegroundColor White
+Write-Host ""
 
-  USEFUL COMMANDS:
-    Stop Aethera:    docker compose down
-    Restart:         docker compose restart
-    View logs:       docker compose logs -f
-    View one service: docker compose logs -f orchestrator
-    Pull models:     docker exec aethera-ollama ollama pull <model>
-    Check health:    docker compose ps
-    Rebuild:         docker compose build
-    Full reset:      docker compose down -v (WARNING: deletes all data)
-"@
-
-Write-Host $nextSteps
-
-Write-Host "`nPress any key to continue..." -ForegroundColor DarkGray
+Write-Host "Press any key to continue..." -ForegroundColor DarkGray
 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")

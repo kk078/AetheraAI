@@ -24,11 +24,15 @@ Slash commands in chat:
 
 import importlib
 import inspect
+import logging
 import os
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Type
 
 from skills.skill_base import AetheraSkill
+
+logger = logging.getLogger("aethera.skills.registry")
 
 
 class SkillRegistry:
@@ -50,6 +54,8 @@ class SkillRegistry:
             return
         self._skills: Dict[str, AetheraSkill] = {}
         self._categories: Dict[str, List[str]] = {}
+        self._lock = threading.Lock()
+        self._skill_files: Dict[str, Path] = {}  # name -> source file path
         self._initialized = True
 
     def discover(self, base_path: Optional[Path] = None):
@@ -96,8 +102,9 @@ class SkillRegistry:
                 try:
                     skill_instance = obj()
                     self.register(skill_instance)
+                    self._skill_files[skill_instance.name] = file_path
                 except Exception as e:
-                    print(f"Warning: Failed to instantiate skill {name}: {e}")
+                    logger.warning(f"Failed to instantiate skill {name}: {e}")
 
     def register(self, skill: AetheraSkill):
         """
@@ -106,24 +113,164 @@ class SkillRegistry:
         Args:
             skill: AetheraSkill instance to register
         """
-        name = skill.name
-        self._skills[name] = skill
+        with self._lock:
+            name = skill.name
+            self._skills[name] = skill
 
-        # Add to category
-        category = skill.category
-        if category not in self._categories:
-            self._categories[category] = []
-        if name not in self._categories[category]:
-            self._categories[category].append(name)
+            # Add to category
+            category = skill.category
+            if category not in self._categories:
+                self._categories[category] = []
+            if name not in self._categories[category]:
+                self._categories[category].append(name)
 
     def unregister(self, name: str):
         """Unregister a skill by name."""
-        if name in self._skills:
-            skill = self._skills[name]
-            category = skill.category
-            if category in self._categories:
-                self._categories[category].remove(name)
-            del self._skills[name]
+        with self._lock:
+            if name in self._skills:
+                skill = self._skills[name]
+                category = skill.category
+                if category in self._categories and name in self._categories[category]:
+                    self._categories[category].remove(name)
+                    if not self._categories[category]:
+                        del self._categories[category]
+                del self._skills[name]
+                self._skill_files.pop(name, None)
+
+    def register_dynamic_skill(self, skill: AetheraSkill, file_path: Optional[Path] = None):
+        """
+        Register a dynamically created skill and optionally track its file.
+
+        Args:
+            skill: AetheraSkill instance to register
+            file_path: Optional path to the skill's source file
+        """
+        self.register(skill)
+        if file_path:
+            with self._lock:
+                self._skill_files[skill.name] = file_path
+        logger.info(f"Registered dynamic skill: {skill.name} (source={skill.source})")
+
+    def hot_reload(self) -> Dict[str, Any]:
+        """
+        Hot-reload user-created skills from disk.
+
+        Invalidates import caches, re-scans skills/user/ directory,
+        and registers any new or modified skills.
+
+        Returns:
+            Dict with 'added', 'removed', 'updated' skill lists
+        """
+        with self._lock:
+            old_names = set(self._skills.keys())
+
+        # Invalidate import caches so modified modules reload
+        importlib.invalidate_caches()
+
+        # Re-discover from user directory
+        base_path = Path(__file__).parent
+        user_dir = base_path / "user"
+        if not user_dir.exists():
+            return {"added": [], "removed": [], "updated": [], "total": len(old_names)}
+
+        # Remove existing user skills first
+        with self._lock:
+            user_skills = dict(self._categories.get("user", []))
+            user_skill_names = list(self._categories.get("user", []))
+            for name in user_skill_names:
+                if name in self._skills:
+                    del self._skills[name]
+                self._skill_files.pop(name, None)
+            if "user" in self._categories:
+                del self._categories["user"]
+
+        # Re-discover
+        for file_path in user_dir.glob("*.py"):
+            if file_path.name.startswith("_"):
+                continue
+            try:
+                # Force reimport by removing from sys.modules
+                rel_path = file_path.relative_to(base_path)
+                module_name = str(rel_path.with_suffix("")).replace(os.sep, ".")
+                full_module = f"skills.{module_name}"
+                if full_module in importlib.sys.modules:
+                    del importlib.sys.modules[full_module]
+                self._load_module(file_path, "user")
+            except Exception as e:
+                logger.warning(f"Failed to hot-reload skill from {file_path}: {e}")
+
+        with self._lock:
+            new_names = set(self._skills.keys())
+
+        added = list(new_names - old_names)
+        removed = list(old_names - new_names)
+        # Updated = re-registered skills that existed before
+        updated = [n for n in added if n in user_skill_names]
+
+        logger.info(f"Hot-reload complete: {len(added)} added, {len(removed)} removed, {len(updated)} updated")
+        return {
+            "added": added,
+            "removed": removed,
+            "updated": updated,
+            "total": len(new_names),
+        }
+
+    def reload_skill(self, name: str) -> bool:
+        """
+        Reload a specific skill by name.
+
+        Args:
+            name: Skill name to reload
+
+        Returns:
+            True if skill was found and reloaded, False otherwise
+        """
+        with self._lock:
+            file_path = self._skill_files.get(name)
+
+        if not file_path or not file_path.exists():
+            logger.warning(f"Cannot reload skill {name}: source file not found")
+            return False
+
+        # Remove old registration
+        self.unregister(name)
+
+        # Force reimport
+        rel_path = file_path.relative_to(Path(__file__).parent)
+        module_name = str(rel_path.with_suffix("")).replace(os.sep, ".")
+        full_module = f"skills.{module_name}"
+        if full_module in importlib.sys.modules:
+            del importlib.sys.modules[full_module]
+
+        importlib.invalidate_caches()
+
+        # Reload
+        category = "user" if "user" in str(file_path) else ("healthcare" if "healthcare" in str(file_path) else "builtin")
+        try:
+            self._load_module(file_path, category)
+            logger.info(f"Reloaded skill: {name}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to reload skill {name}: {e}")
+            return False
+
+    def reload_user_skills(self) -> Dict[str, Any]:
+        """
+        Remove all user-category skills and re-discover from skills/user/.
+
+        Returns:
+            Dict with 'added', 'removed', 'total' counts
+        """
+        return self.hot_reload()
+
+    def get_user_skills(self) -> List[AetheraSkill]:
+        """Get all user-created skills."""
+        return self.get_by_category("user")
+
+    def get_skill_file_path(self, name: str) -> Optional[Path]:
+        """Get the source file path for a skill."""
+        with self._lock:
+            return self._skill_files.get(name)
 
     def get(self, name: str) -> Optional[AetheraSkill]:
         """Get a skill by name."""

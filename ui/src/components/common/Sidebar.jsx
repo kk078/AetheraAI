@@ -38,6 +38,7 @@ const navSections = [
       { icon: 'plugins', label: 'Plugins', view: 'plugins' },
       { icon: 'connectors', label: 'Connectors', view: 'connectors' },
       { icon: 'automations', label: 'Automations', view: 'automations' },
+      { icon: 'pc', label: 'PC Control', view: 'pc-control' },
     ],
   },
   {
@@ -67,85 +68,101 @@ export default function Sidebar({ isOpen, onToggle, currentView, onViewChange })
   };
 
   return (
-    <aside
-      className={`${
-        isOpen ? 'w-64' : 'w-0'
-      } transition-all duration-300 bg-aethera-surface border-r border-aethera-border flex flex-col overflow-hidden`}
-    >
-      {/* New Chat Button */}
-      <div className="p-3">
-        <button
-          onClick={() => handleNavClick('chat')}
-          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-aethera-primary hover:bg-cyan-600 text-white rounded-lg font-medium transition-colors"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-          New Chat
-        </button>
-      </div>
+    <>
+      {/* Mobile overlay backdrop */}
+      {isOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-30 md:hidden"
+          onClick={onToggle}
+          aria-hidden="true"
+        />
+      )}
 
-      {/* Navigation -- organized by section */}
-      <nav className="flex-1 px-2 py-2 overflow-y-auto">
-        {navSections.map((section) => (
-          <div key={section.title} className="mb-3">
-            <p className="px-3 pt-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-aethera-text-secondary/60">
-              {section.title}
-            </p>
-            {section.items.map((item) => (
+      <aside
+        className={`${
+          isOpen ? 'w-64' : 'w-0'
+        } transition-all duration-300 bg-aethera-surface border-r border-aethera-border flex flex-col overflow-hidden fixed md:relative z-40 h-full`}
+        role="navigation"
+        aria-label="Main navigation"
+      >
+        {/* New Chat Button */}
+        <div className="p-3">
+          <button
+            onClick={() => handleNavClick('chat')}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-aethera-primary hover:bg-cyan-600 text-white rounded-lg font-medium transition-colors"
+            aria-label="Start new chat"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            New Chat
+          </button>
+        </div>
+
+        {/* Navigation -- organized by section */}
+        <nav className="flex-1 px-2 py-2 overflow-y-auto" aria-label="Sidebar navigation">
+          {navSections.map((section) => (
+            <div key={section.title} className="mb-3">
+              <p className="px-3 pt-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-aethera-text-secondary/60">
+                {section.title}
+              </p>
+              {section.items.map((item) => (
+                <button
+                  key={item.view}
+                  onClick={() => handleNavClick(item.view)}
+                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm ${
+                    currentView === item.view
+                      ? 'bg-aethera-primary/20 text-aethera-foreground'
+                      : 'text-aethera-text-secondary hover:text-aethera-foreground hover:bg-aethera-tertiary'
+                  }`}
+                  aria-current={currentView === item.view ? 'page' : undefined}
+                >
+                  <SidebarIcon name={item.icon} />
+                  <span>{item.label}</span>
+                </button>
+              ))}
+            </div>
+          ))}
+        </nav>
+
+        {/* Quick Specialist Switch */}
+        <div className="p-3 border-t border-aethera-border">
+          <p className="text-xs text-aethera-text-secondary mb-2">Quick Switch</p>
+          <div className="flex flex-wrap gap-1">
+            {specialistQuickSwitch.map((spec) => (
               <button
-                key={item.view}
-                onClick={() => handleNavClick(item.view)}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm ${
-                  currentView === item.view
-                    ? 'bg-aethera-primary/20 text-aethera-foreground'
-                    : 'text-aethera-text-secondary hover:text-aethera-foreground hover:bg-aethera-tertiary'
-                }`}
+                key={spec.name}
+                onClick={() => handleSpecialistClick(spec.specialist)}
+                className="text-white text-xs px-2 py-1 rounded transition-opacity hover:opacity-80"
+                style={{
+                  backgroundColor: spec.specialist === 'healthcare_provider' ? '#0891b2' :
+                    spec.specialist === 'healthcare_payer' ? '#7c3aed' :
+                    spec.specialist === 'healthcare_clinical' ? '#059669' :
+                    spec.specialist === 'healthcare_it' ? '#dc2626' :
+                    spec.specialist === 'finance' ? '#16a34a' : '#6b7280'
+                }}
+                aria-label={`Switch to ${spec.name} specialist`}
               >
-                <SidebarIcon name={item.icon} />
-                <span>{item.label}</span>
+                {spec.name}
               </button>
             ))}
           </div>
-        ))}
-      </nav>
-
-      {/* Quick Specialist Switch */}
-      <div className="p-3 border-t border-aethera-border">
-        <p className="text-xs text-aethera-text-secondary mb-2">Quick Switch</p>
-        <div className="flex flex-wrap gap-1">
-          {specialistQuickSwitch.map((spec) => (
-            <button
-              key={spec.name}
-              onClick={() => handleSpecialistClick(spec.specialist)}
-              className="text-white text-xs px-2 py-1 rounded transition-opacity hover:opacity-80"
-              style={{
-                backgroundColor: spec.specialist === 'healthcare_provider' ? '#0891b2' :
-                  spec.specialist === 'healthcare_payer' ? '#7c3aed' :
-                  spec.specialist === 'healthcare_clinical' ? '#059669' :
-                  spec.specialist === 'healthcare_it' ? '#dc2626' :
-                  spec.specialist === 'finance' ? '#16a34a' : '#6b7280'
-              }}
-            >
-              {spec.name}
-            </button>
-          ))}
         </div>
-      </div>
 
-      {/* Usage Stats */}
-      <div className="p-3 border-t border-aethera-border">
-        <div className="text-xs text-aethera-text-secondary">
-          <div className="flex justify-between mb-1">
-            <span>Cloud Usage</span>
-            <span>45%</span>
-          </div>
-          <div className="w-full bg-aethera-tertiary rounded-full h-1.5">
-            <div className="bg-aethera-primary h-1.5 rounded-full" style={{ width: '45%' }} />
+        {/* Usage Stats */}
+        <div className="p-3 border-t border-aethera-border">
+          <div className="text-xs text-aethera-text-secondary">
+            <div className="flex justify-between mb-1">
+              <span>Cloud Usage</span>
+              <span>45%</span>
+            </div>
+            <div className="w-full bg-aethera-tertiary rounded-full h-1.5" role="progressbar" aria-valuenow={45} aria-valuemin={0} aria-valuemax={100} aria-label="Cloud usage: 45%">
+              <div className="bg-aethera-primary h-1.5 rounded-full" style={{ width: '45%' }} />
+            </div>
           </div>
         </div>
-      </div>
-    </aside>
+      </aside>
+    </>
   );
 }
 
@@ -244,6 +261,11 @@ function SidebarIcon({ name }) {
     automations: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+      </svg>
+    ),
+    'pc': (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
       </svg>
     ),
     settings: (
