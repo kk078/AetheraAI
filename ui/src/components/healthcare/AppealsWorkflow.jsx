@@ -73,12 +73,12 @@ export default function AppealsWorkflow() {
     setError(null);
 
     try {
-      const response = await api.post('/api/healthcare/appeal-letter', {
+      const data = await api.generateAppeal({
         denial: denialData,
         analysis,
         clinicalRationale,
       });
-      const letter = response.letter || response.content || response;
+      const letter = data.letter || data.content || data;
       setAppealLetter(typeof letter === 'string' ? letter : JSON.stringify(letter, null, 2));
       setCurrentStep(3);
     } catch (err) {

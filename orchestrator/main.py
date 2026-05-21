@@ -707,7 +707,7 @@ async def chat_stream(request: ChatRequest):
         tool_defs = []
         if registry and routing_result.recommended_tools:
             for tn in routing_result.recommended_tools:
-                s = registry.get_skill(tn)
+                s = registry.get(tn)
                 if s:
                     tool_defs.append(s.to_tool_definition())
         if tool_defs:
@@ -972,7 +972,7 @@ async def get_skill(skill_name: str):
     registry = _get_skill_registry()
     if registry is None:
         raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
-    skill = registry.get_skill(skill_name)
+    skill = registry.get(skill_name)
     if skill is None:
         raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
     return {
