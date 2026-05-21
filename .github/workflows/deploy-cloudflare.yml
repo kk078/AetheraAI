@@ -1,15 +1,29 @@
 name: Deploy to Cloudflare
 
-# Deploys the Worker API and the Pages frontend. Requires repo secrets:
-#   CLOUDFLARE_API_TOKEN  (Workers + Pages + D1 edit)
+# Triggers:
+#   - Manual "Run workflow" button (after this file lands on the default branch),
+#     with a choice of what to deploy (default: worker only).
+#   - Push to main -> deploy Worker + Pages.
+#   - Push to the active feature branch -> deploy Worker ONLY (Pages stays on main),
+#     so you can test the serverless API before merging.
+#
+# Required repo secrets (Settings > Secrets and variables > Actions):
+#   CLOUDFLARE_API_TOKEN  (Workers Scripts edit, D1 edit, Pages edit, Account read)
 #   CLOUDFLARE_ACCOUNT_ID
-# Worker runtime secrets (OLLAMA_API_KEY, API_KEYS) are set once out-of-band:
-#   cd worker && npx wrangler secret put OLLAMA_API_KEY
+# Worker runtime secrets (OLLAMA_API_KEY, API_KEYS) are set once in the Cloudflare
+# dashboard (Workers & Pages > aethera-ai > Settings > Variables and Secrets) or
+# via `wrangler secret put`.
 
 on:
   workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: "What to deploy"
+        type: choice
+        options: [worker, pages, both]
+        default: worker
   push:
-    branches: [main]
+    branches: [main, "claude/add-claude-documentation-AXi7P"]
     paths:
       - "worker/**"
       - "ui/**"
@@ -17,22 +31,39 @@ on:
 
 jobs:
   worker:
+    if: >-
+      github.event_name == 'push' ||
+      github.event.inputs.deploy_target == 'worker' ||
+      github.event.inputs.deploy_target == 'both'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Install
+        working-directory: worker
+        run: npm install
+      # Verify the TypeScript port before shipping — fails the run on errors.
+      - name: Typecheck
+        working-directory: worker
+        run: npm run typecheck
+      - name: Test
+        working-directory: worker
+        run: npm test
       - name: Deploy Worker
         working-directory: worker
-        run: |
-          npm install
-          npx wrangler deploy
+        run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
   pages:
+    # Pages deploys only from main, or when explicitly selected in a manual run.
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event.inputs.deploy_target == 'pages' ||
+      github.event.inputs.deploy_target == 'both'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
