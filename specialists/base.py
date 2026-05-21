@@ -681,6 +681,76 @@ TOOL_DEFINITIONS: Dict[str, Dict[str, Any]] = {
             }
         }
     },
+    "em_level_advisor": {
+        "type": "function",
+        "function": {
+            "name": "em_level_advisor",
+            "description": "Recommend an office/outpatient E/M code (99202-99215, 2021+ rules) by total time or MDM.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "method": {"type": "string", "enum": ["time", "mdm"]},
+                    "patient_type": {"type": "string", "enum": ["new", "established"]},
+                    "total_time_minutes": {"type": "number"},
+                    "mdm_level": {"type": "string", "enum": ["straightforward", "low", "moderate", "high"]},
+                    "problems_level": {"type": "string", "enum": ["straightforward", "low", "moderate", "high"]},
+                    "data_level": {"type": "string", "enum": ["straightforward", "low", "moderate", "high"]},
+                    "risk_level": {"type": "string", "enum": ["straightforward", "low", "moderate", "high"]}
+                },
+                "required": ["patient_type"]
+            }
+        }
+    },
+    "modifier_recommender": {
+        "type": "function",
+        "function": {
+            "name": "modifier_recommender",
+            "description": "Recommend CPT/HCPCS modifiers (25, 59/X{EPSU}, 50, 51, 76/77, 26/TC, 58/79/24, RT/LT, ...) for a billing scenario.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cpt": {"type": "string"},
+                    "scenario": {"type": "object", "description": "Boolean scenario flags plus optional 'side' and 'x_subset'"}
+                },
+                "required": ["scenario"]
+            }
+        }
+    },
+    "medical_necessity_builder": {
+        "type": "function",
+        "function": {
+            "name": "medical_necessity_builder",
+            "description": "Build a structured medical-necessity rationale linking a service to diagnoses, indications, and failed conservative care, with a documentation checklist.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cpt": {"type": "string"},
+                    "service_description": {"type": "string"},
+                    "diagnoses": {"type": "array", "items": {"type": "string"}},
+                    "clinical_indications": {"type": "array", "items": {"type": "string"}},
+                    "failed_conservative": {"type": "array", "items": {"type": "string"}},
+                    "supporting_findings": {"type": "array", "items": {"type": "string"}}
+                },
+                "required": ["cpt", "diagnoses"]
+            }
+        }
+    },
+    "hcc_gap_finder": {
+        "type": "function",
+        "function": {
+            "name": "hcc_gap_finder",
+            "description": "Find HCC risk-adjustment recapture gaps (prior-year HCCs not recaptured) and suspected new HCCs; estimates RAF and revenue impact.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "current_year_dx": {"type": "array", "items": {"type": "string"}},
+                    "prior_year_hccs": {"type": "array", "items": {"type": "string"}},
+                    "revenue_per_raf": {"type": "number"}
+                },
+                "required": ["prior_year_hccs"]
+            }
+        }
+    },
 }
 
 
