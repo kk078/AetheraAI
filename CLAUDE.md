@@ -47,7 +47,9 @@ Copy `.env.example` → `.env` before running. Docker reads secrets/integration 
 
 ## Architecture (the big picture)
 
-Request flow: **UI → `POST /api/chat` (orchestrator) → router → sensitivity scan → cascade → LiteLLM → model**, with specialists/skills/plugins/connectors/memory layered in. Read these to understand the core loop:
+Request flow: **UI → `POST /api/chat` (orchestrator) → router → sensitivity scan → cascade → agent loop → LiteLLM → model**, with specialists/skills/plugins/connectors/memory layered in. Read these to understand the core loop:
+
+- **`orchestrator/agent.py`** — the agentic reason-act loop (`run_agent_loop`). This is what lets the model actually *use* tools: the model proposes `tool_calls`, the loop executes each via the skill registry, appends the result as a `role="tool"` message, and iterates until the model returns a final answer or `max_iterations` is hit. The LLM call is injected (`llm_client`) so the loop is unit-testable without a live model (see `tests/test_agent.py`). `execute_llm_call` in `main.py` wires this to LiteLLM via `_litellm_client` and returns an `AgentResult` (content + `tools_used` + per-tool `invocations`). When adding agent behavior, extend this loop rather than the per-endpoint code.
 
 - **`orchestrator/main.py`** — the FastAPI app and the single source of truth for HTTP/WebSocket endpoints. Subsystems (skills, plugins, connectors, memory, proactive) are loaded **lazily** via module-global `_get_*()` helpers that swallow import errors and log a warning, so the app boots even when an optional subsystem or its deps are missing. When adding a subsystem, follow this lazy-getter pattern rather than importing at top level.
 - **`orchestrator/router.py`** — `AetheraRouter` + `IntentClassifier`. Classifies a query to one of the 20 specialists using keyword/intent/entity matching defined in `orchestrator/config.yaml`, and returns recommended tools. Routing is config-driven, not hardcoded.

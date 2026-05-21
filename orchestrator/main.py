@@ -32,6 +32,7 @@ from orchestrator.sensitivity import get_sensitivity_analyzer, SensitivityAnalyz
 from orchestrator.explainer import get_explainer_store, ReasoningChain, StepType
 from orchestrator.scenarios import ScenarioEngine
 from orchestrator.session_sync import SessionSync
+from orchestrator.agent import AgentResult, run_agent_loop
 
 # Lazy imports for skills, plugins, connectors, memory — loaded on startup
 _skill_registry = None
@@ -530,13 +531,15 @@ async def chat(request: ChatRequest):
 
         messages.append({"role": "user", "content": request.message})
 
-        # 5. Execute LLM call
-        response_content = await execute_llm_call(
+        # 5. Run the agentic loop (executes tools the model calls, then answers)
+        agent_result = await execute_llm_call(
             messages=messages,
             model=model_selection.model_name,
             tools=routing_result.recommended_tools,
             stream=request.stream
         )
+        response_content = agent_result.content
+        tools_used = agent_result.tools_used or routing_result.recommended_tools
 
         # 6. Create response
         # Detect teaching mode intent
@@ -568,7 +571,7 @@ async def chat(request: ChatRequest):
             specialist=routing_result.primary_specialist,
             model=model_selection.model_name,
             confidence=routing_result.confidence,
-            tools_used=routing_result.recommended_tools,
+            tools_used=tools_used,
             reasoning=routing_result.reasoning,
             timestamp=datetime.now(),
             teaching_mode=teaching_mode_data
@@ -3899,33 +3902,13 @@ IMPORTANT: This conversation contains sensitive personal information.
     return base_prompt
 
 
-async def execute_llm_call(
-    messages: List[Dict[str, str]],
-    model: str,
-    tools: List[str],
-    stream: bool = True
-) -> str:
-    """Execute LLM call via LiteLLM proxy."""
+async def _litellm_client(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Post a chat-completions payload to LiteLLM, returning a parsed response.
+
+    On transport errors a synthetic response carrying a user-facing message is
+    returned so the agent loop terminates cleanly instead of raising.
+    """
     import httpx
-
-    # Build tool definitions from skill registry
-    tool_definitions = []
-    registry = _get_skill_registry()
-    if registry and tools:
-        for tool_name in tools:
-            skill = registry.get_skill(tool_name)
-            if skill:
-                tool_definitions.append(skill.to_tool_definition())
-
-    payload = {
-        "model": model,
-        "messages": messages,
-        "stream": False,  # Always use non-streaming for direct calls
-        "temperature": 0.7,
-        "max_tokens": 4096
-    }
-    if tool_definitions:
-        payload["tools"] = tool_definitions
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
         try:
@@ -3934,29 +3917,36 @@ async def execute_llm_call(
                 json=payload,
             )
             response.raise_for_status()
-            data = response.json()
-
-            # Extract content from response
-            choice = data.get("choices", [{}])[0]
-            message = choice.get("message", {})
-            content = message.get("content", "")
-
-            # If tool calls were made, include them
-            if message.get("tool_calls"):
-                for tc in message["tool_calls"]:
-                    func = tc.get("function", {})
-                    content += f"\n[Tool Call: {func.get('name', 'unknown')}]"
-
-            return content or "I apologize, but I was unable to generate a response. Please try again."
+            return response.json()
         except httpx.TimeoutException:
-            logger.error(f"LLM call timed out for model {model}")
-            return "I'm sorry, the request timed out. Please try again or use a different model."
+            logger.error(f"LLM call timed out for model {payload.get('model')}")
+            message = "I'm sorry, the request timed out. Please try again or use a different model."
         except httpx.ConnectError:
             logger.error(f"Cannot connect to LLM service at {LITELLM_URL}")
-            return "I'm sorry, the AI service is currently unavailable. Please try again in a moment."
+            message = "I'm sorry, the AI service is currently unavailable. Please try again in a moment."
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
-            return f"I encountered an error processing your request. Please try again."
+            message = "I encountered an error processing your request. Please try again."
+    return {"choices": [{"message": {"content": message}}]}
+
+
+async def execute_llm_call(
+    messages: List[Dict[str, str]],
+    model: str,
+    tools: List[str],
+    stream: bool = True
+) -> AgentResult:
+    """Run the agentic reason-act loop via LiteLLM, executing tools as the model calls them."""
+    result = await run_agent_loop(
+        messages=messages,
+        model=model,
+        tool_names=tools or [],
+        registry=_get_skill_registry(),
+        llm_client=_litellm_client,
+    )
+    if not result.content:
+        result.content = "I apologize, but I was unable to generate a response. Please try again."
+    return result
 
 
 async def log_audit_event(
