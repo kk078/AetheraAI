@@ -8,8 +8,14 @@ stack. **Phase 1 is a vertical slice**, not feature parity with the Python app.
   `/api/skills/:name/execute`, `/api/compliance/user-data/:userId`.
 - **Agent loop** (`src/agent.ts`) — TS port of `orchestrator/agent.py`: the model
   calls tools, we execute them, feed results back, iterate.
-- **Skills** (`src/skills.ts`) — 3 ported so far: `rcm_kpi_calculator`,
-  `em_level_advisor`, `patient_cost_estimator`. The other ~25 are still to port.
+- **Router + specialists** (`src/router.ts`, `src/specialists.ts`) — config-driven
+  keyword routing (port of `orchestrator/router.py` + `config.yaml`). `/api/chat`
+  routes the query to a specialist and uses its system prompt + tool set.
+- **Skills** (`src/skills.ts`) — 11 ported: `rcm_kpi_calculator`,
+  `em_level_advisor`, `patient_cost_estimator`, `ar_prioritizer`,
+  `underpayment_detector`, `timely_filing_calculator`, `modifier_recommender`,
+  `medical_necessity_builder`, `hcc_gap_finder`, `structured_extractor`,
+  `data_insights`. (These are the self-contained, pure-logic skills.)
 - **D1** (`DB`) for conversations/messages, **KV** (`CACHE`, = `aethera-ai-cache`),
   **R2** (`ASSETS_BUCKET`, = `aethera-ai-assets`).
 - **Auth** (`src/auth.ts`) — bearer-key gate on `/api/*` (`API_AUTH_ENABLED`),
@@ -37,7 +43,13 @@ npm run deploy                # wrangler deploy
 CI deploys both Worker and Pages via `.github/workflows/deploy-cloudflare.yml`.
 
 ## Not yet ported (roadmap)
-Router/specialists, the remaining 25 skills, memory/RAG (→ **Vectorize**),
-sensitivity/PHI routing, proactive scheduler (→ **Cron Triggers + Queues**),
-plugins/connectors, voice. Local-only features (local Ollama, Whisper/Piper) do
-not exist serverless — all inference goes to cloud LLM APIs (needs a BAA for PHI).
+- **Data-backed healthcare skills** (`code_lookup`, `fee_schedule`, `cci_editor`,
+  `denial_analyzer`, `eligibility_checker`, `drug_reference`, `ndc_pricer`,
+  `drg_grouper`, `apc_grouper`, `claim_scrubber`, …) — these embed large
+  reference datasets (code sets, MPFS, NCCI, CARC/RARC, benefit tables). They
+  need their datasets ported (likely into D1/KV/R2) rather than a blind logic
+  port, so they're deferred to avoid shipping subtly-wrong clinical/billing data.
+- **Memory / RAG** → **Vectorize**; **sensitivity/PHI routing**; **proactive
+  scheduler** → **Cron Triggers + Queues**; **plugins/connectors**; **voice**.
+- Local-only features (local Ollama, Whisper/Piper) don't exist serverless — all
+  inference goes to cloud LLM APIs (needs a BAA for PHI).

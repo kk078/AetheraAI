@@ -5,6 +5,8 @@ import { requestAuthorized } from "./auth";
 import { makeLLMClient } from "./llm";
 import { runAgentLoop } from "./agent";
 import { REGISTRY } from "./skills";
+import { route } from "./router";
+import { SPECIALISTS, getSpecialist } from "./specialists";
 import { saveMessage, getRecentMessages, deleteUserData } from "./db";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -40,6 +42,18 @@ app.post("/api/skills/:name/execute", async (c) => {
   return c.json(skill.execute(args));
 });
 
+app.get("/api/specialists", (c) =>
+  c.json({
+    specialists: SPECIALISTS.map((s) => ({
+      name: s.name,
+      display_name: s.display_name,
+      description: s.description,
+      tools: s.tools,
+      priority: s.priority,
+    })),
+  }),
+);
+
 app.post("/api/chat", async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const message: string = body.message ?? "";
@@ -48,13 +62,12 @@ app.post("/api/chat", async (c) => {
   const conversationId: string = body.conversation_id ?? crypto.randomUUID();
   const model: string = body.model ?? c.env.DEFAULT_MODEL;
 
-  const messages: ChatMessage[] = [
-    {
-      role: "system",
-      content:
-        "You are Aethera, a healthcare revenue-cycle AI. Use the available tools to compute answers precisely.",
-    },
-  ];
+  // Route to a specialist (or honor a forced one), then use its system prompt
+  // and tool set for the agent loop.
+  const routing = route(message, body.specialist);
+  const specialist = getSpecialist(routing.primary_specialist)!;
+
+  const messages: ChatMessage[] = [{ role: "system", content: specialist.system_prompt }];
   if (body.conversation_id) {
     try {
       messages.push(...(await getRecentMessages(c.env, conversationId, 10)));
@@ -64,7 +77,7 @@ app.post("/api/chat", async (c) => {
   }
   messages.push({ role: "user", content: message });
 
-  const result = await runAgentLoop(messages, model, Object.keys(REGISTRY), {
+  const result = await runAgentLoop(messages, model, routing.recommended_tools, {
     llmClient: makeLLMClient(c.env),
   });
 
@@ -77,6 +90,9 @@ app.post("/api/chat", async (c) => {
 
   return c.json({
     conversation_id: conversationId,
+    specialist: routing.primary_specialist,
+    confidence: routing.confidence,
+    reasoning: routing.reasoning,
     message: { role: "assistant", content: result.content },
     tools_used: result.tools_used,
     iterations: result.iterations,

@@ -190,10 +190,535 @@ export const patientCostEstimator: Skill = {
   },
 };
 
+// --------------------------------------------------------------------------
+// AR follow-up prioritizer
+// --------------------------------------------------------------------------
+const PAYER_COLLECTIBILITY: Record<string, number> = {
+  commercial: 0.95, medicare: 0.93, medicaid: 0.85, managed_medicaid: 0.82,
+  workers_comp: 0.8, self_pay: 0.4, auto: 0.7, other: 0.75,
+};
+const TIMELY_FILING_DAYS: Record<string, number> = {
+  medicare: 365, medicaid: 95, managed_medicaid: 95, commercial: 90, bcbs: 365,
+  aetna: 90, cigna: 90, uhc: 90, tricare: 365, workers_comp: 365, auto: 180, self_pay: 0, other: 180,
+};
+const AGING_BUCKETS: [number, number | null][] = [[0, 30], [31, 60], [61, 90], [91, 120], [121, null]];
+
+function bucketLabel(age: number): string {
+  for (const [lo, hi] of AGING_BUCKETS) {
+    if (hi === null) { if (age >= lo) return `${lo}+`; }
+    else if (age >= lo && age <= hi) return `${lo}-${hi}`;
+  }
+  return "0-30";
+}
+function ageDays(acct: any): number {
+  if (acct.age_days != null) return Math.max(0, parseInt(acct.age_days, 10) || 0);
+  const dos = acct.date_of_service || acct.dos;
+  if (dos) {
+    const d = new Date(String(dos).slice(0, 10));
+    if (!isNaN(d.getTime())) return Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000));
+  }
+  return 0;
+}
+
+export const arPrioritizer: Skill = {
+  name: "ar_prioritizer",
+  description:
+    "Prioritize an AR worklist by aging, dollars-at-risk, and payer collectibility; flags timely-filing risk.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["prioritize", "aging_summary"] },
+      accounts: { type: "array", items: { type: "object" } },
+      limit: { type: "integer" },
+    },
+    required: ["accounts"],
+  },
+  execute(a) {
+    const accounts = a.accounts;
+    if (!Array.isArray(accounts)) return { success: false, error: "'accounts' must be a list" };
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    const enriched: any[] = [];
+    const buckets: Record<string, any> = {};
+    let totalAr = 0;
+    for (const acct of accounts) {
+      const balance = Number(acct.balance ?? 0) || 0;
+      const age = ageDays(acct);
+      const payer = String(acct.payer_class ?? "other").toLowerCase();
+      const collect = PAYER_COLLECTIBILITY[payer] ?? PAYER_COLLECTIBILITY.other;
+      const score = r2(balance * (1 + Math.min(age, 180) / 90) * collect);
+      const tf = TIMELY_FILING_DAYS[payer] ?? TIMELY_FILING_DAYS.other;
+      const tfAtRisk = !!tf && age >= tf - 15 && age < tf;
+      const tfExpired = !!tf && age >= tf;
+      const label = bucketLabel(age);
+      const b = (buckets[label] ??= { bucket: label, count: 0, balance: 0 });
+      b.count += 1; b.balance = r2(b.balance + balance); totalAr += balance;
+      enriched.push({
+        account_id: acct.account_id, balance: r2(balance), age_days: age, aging_bucket: label,
+        payer_class: payer, priority_score: score, timely_filing_at_risk: tfAtRisk, timely_filing_expired: tfExpired,
+      });
+    }
+    const ordered = ["0-30", "31-60", "61-90", "91-120", "121+"].filter((l) => buckets[l]).map((l) => buckets[l]);
+    const summary = {
+      total_accounts: accounts.length, total_ar: r2(totalAr), buckets: ordered,
+      at_risk_timely_filing: enriched.filter((e) => e.timely_filing_at_risk).length,
+      expired_timely_filing: enriched.filter((e) => e.timely_filing_expired).length,
+    };
+    if (a.action === "aging_summary") return { success: true, data: summary };
+    enriched.sort((x, y) => y.priority_score - x.priority_score);
+    const worklist = a.limit ? enriched.slice(0, Number(a.limit)) : enriched;
+    return { success: true, data: { summary, worklist } };
+  },
+};
+
+// --------------------------------------------------------------------------
+// Underpayment / contract variance detector
+// --------------------------------------------------------------------------
+export const underpaymentDetector: Skill = {
+  name: "underpayment_detector",
+  description:
+    "Detect payer underpayments by comparing paid amounts to contractually-expected rates per claim line.",
+  parameters: {
+    type: "object",
+    properties: {
+      lines: { type: "array", items: { type: "object" } },
+      tolerance: { type: "number" },
+    },
+    required: ["lines"],
+  },
+  execute(a) {
+    const lines = a.lines;
+    if (!Array.isArray(lines)) return { success: false, error: "'lines' must be a list" };
+    const tol = Number(a.tolerance ?? 0.01) || 0.01;
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    const flagged: any[] = [];
+    const byCpt: Record<string, number> = {};
+    let totalExpected = 0, totalPaid = 0, totalVar = 0;
+    for (const ln of lines) {
+      const cpt = String(ln.cpt ?? "").trim() || "UNKNOWN";
+      const units = Number(ln.units ?? 1) || 1;
+      const rate = Number(ln.expected_rate ?? 0) || 0;
+      const paid = Number(ln.paid_amount ?? 0) || 0;
+      const expected = r2(rate * units);
+      const variance = r2(expected - paid);
+      totalExpected += expected; totalPaid += paid;
+      if (variance > tol) {
+        totalVar += variance;
+        byCpt[cpt] = r2((byCpt[cpt] ?? 0) + variance);
+        flagged.push({ cpt, units, expected, paid: r2(paid), variance, pct_underpaid: expected ? r2((variance / expected) * 100) : null });
+      }
+    }
+    flagged.sort((x, y) => y.variance - x.variance);
+    return {
+      success: true,
+      data: {
+        summary: {
+          lines_evaluated: lines.length, lines_underpaid: flagged.length,
+          total_expected: r2(totalExpected), total_paid: r2(totalPaid), total_recoverable_variance: r2(totalVar),
+        },
+        by_cpt: Object.entries(byCpt).sort((x, y) => y[1] - x[1]).map(([cpt, variance]) => ({ cpt, variance })),
+        underpaid_lines: flagged,
+      },
+    };
+  },
+};
+
+// --------------------------------------------------------------------------
+// Timely filing calculator
+// --------------------------------------------------------------------------
+export const timelyFilingCalculator: Skill = {
+  name: "timely_filing_calculator",
+  description:
+    "Compute claim timely-filing deadlines from date of service and payer; reports days remaining and status.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["calculate", "batch"] },
+      date_of_service: { type: "string" },
+      payer_class: { type: "string" },
+      filing_limit_days: { type: "integer" },
+      as_of: { type: "string" },
+      claims: { type: "array", items: { type: "object" } },
+    },
+  },
+  execute(a) {
+    const AT_RISK = 15;
+    const evalOne = (dos: any, payer: any, override: any, asOf: Date) => {
+      const dosDate = new Date(String(dos).slice(0, 10));
+      if (isNaN(dosDate.getTime())) throw new Error(`Invalid date: ${dos}`);
+      const key = String(payer ?? "other").toLowerCase();
+      const limit = override ? parseInt(override, 10) : (TIMELY_FILING_DAYS[key] ?? TIMELY_FILING_DAYS.other);
+      const deadline = new Date(dosDate.getTime() + limit * 86400000);
+      const daysRemaining = Math.floor((deadline.getTime() - asOf.getTime()) / 86400000);
+      const status = daysRemaining < 0 ? "expired" : daysRemaining <= AT_RISK ? "at_risk" : "ok";
+      return {
+        date_of_service: dosDate.toISOString().slice(0, 10), payer_class: key,
+        filing_limit_days: limit, deadline: deadline.toISOString().slice(0, 10), days_remaining: daysRemaining, status,
+      };
+    };
+    try {
+      const asOf = a.as_of ? new Date(String(a.as_of).slice(0, 10)) : new Date();
+      if (a.action === "batch") {
+        const claims = Array.isArray(a.claims) ? a.claims : [];
+        const results = claims.filter((c: any) => c.date_of_service)
+          .map((c: any) => evalOne(c.date_of_service, c.payer_class ?? "other", c.filing_limit_days, asOf));
+        return {
+          success: true,
+          data: {
+            results,
+            expired: results.filter((r) => r.status === "expired").length,
+            at_risk: results.filter((r) => r.status === "at_risk").length,
+          },
+        };
+      }
+      if (!a.date_of_service) return { success: false, error: "'date_of_service' is required" };
+      return { success: true, data: evalOne(a.date_of_service, a.payer_class ?? "other", a.filing_limit_days, asOf) };
+    } catch (e: any) {
+      return { success: false, error: String(e?.message ?? e) };
+    }
+  },
+};
+
+// --------------------------------------------------------------------------
+// Modifier recommender
+// --------------------------------------------------------------------------
+const FLAG_MODIFIERS: Record<string, [string, string]> = {
+  separate_em_same_day_procedure: ["25", "Significant, separately identifiable E/M on the same day as a procedure"],
+  distinct_procedural_service: ["59", "Distinct procedural service (consider X{EPSU} subsets)"],
+  bilateral_procedure: ["50", "Bilateral procedure performed"],
+  repeat_same_physician: ["76", "Repeat procedure by the same physician"],
+  repeat_other_physician: ["77", "Repeat procedure by another physician"],
+  multiple_procedures: ["51", "Multiple procedures in the same session"],
+  professional_component: ["26", "Professional component only"],
+  technical_component: ["TC", "Technical component only"],
+  assistant_surgeon: ["80", "Assistant surgeon"],
+  discontinued_procedure: ["53", "Discontinued procedure"],
+  staged_related_postop: ["58", "Staged/related procedure during the postoperative period"],
+  unrelated_postop: ["79", "Unrelated procedure during the postoperative period"],
+  unrelated_em_postop: ["24", "Unrelated E/M during a postoperative period"],
+  mandated_service: ["32", "Mandated service"],
+  reduced_service: ["52", "Reduced services"],
+};
+const X_SUBSETS: Record<string, [string, string]> = {
+  separate_encounter: ["XE", "Separate encounter"],
+  separate_structure: ["XS", "Separate structure/organ"],
+  separate_practitioner: ["XP", "Separate practitioner"],
+  unusual_separate: ["XU", "Unusual non-overlapping service"],
+};
+const SIDE_MODIFIERS: Record<string, [string, string]> = { left: ["LT", "Left side"], right: ["RT", "Right side"] };
+
+export const modifierRecommender: Skill = {
+  name: "modifier_recommender",
+  description: "Recommend CPT/HCPCS modifiers for a billing scenario, with a rationale for each.",
+  parameters: {
+    type: "object",
+    properties: { cpt: { type: "string" }, scenario: { type: "object" } },
+    required: ["scenario"],
+  },
+  execute(a) {
+    const scenario = a.scenario;
+    if (typeof scenario !== "object" || scenario === null) return { success: false, error: "'scenario' must be an object" };
+    const recommended: { modifier: string; rationale: string }[] = [];
+    const seen = new Set<string>();
+    const add = (mod: string, why: string) => { if (!seen.has(mod)) { seen.add(mod); recommended.push({ modifier: mod, rationale: why }); } };
+    for (const [flag, [mod, why]] of Object.entries(FLAG_MODIFIERS)) if (scenario[flag]) add(mod, why);
+    const x = scenario.x_subset;
+    if (x && X_SUBSETS[x]) add(X_SUBSETS[x][0], X_SUBSETS[x][1] + " (preferred over 59 when specific)");
+    const side = String(scenario.side ?? "").toLowerCase();
+    if (SIDE_MODIFIERS[side]) add(SIDE_MODIFIERS[side][0], SIDE_MODIFIERS[side][1]);
+    if (!recommended.length)
+      return { success: true, data: { cpt: a.cpt, recommended_modifiers: [], note: "No modifier indicated by the provided scenario." } };
+    return { success: true, data: { cpt: a.cpt, recommended_modifiers: recommended, modifiers: recommended.map((r) => r.modifier) } };
+  },
+};
+
+// --------------------------------------------------------------------------
+// Medical necessity rationale builder
+// --------------------------------------------------------------------------
+export const medicalNecessityBuilder: Skill = {
+  name: "medical_necessity_builder",
+  description:
+    "Build a structured medical-necessity rationale linking a service to diagnoses, indications, and failed conservative care, with a documentation checklist.",
+  parameters: {
+    type: "object",
+    properties: {
+      cpt: { type: "string" },
+      service_description: { type: "string" },
+      diagnoses: { type: "array", items: { type: "string" } },
+      clinical_indications: { type: "array", items: { type: "string" } },
+      failed_conservative: { type: "array", items: { type: "string" } },
+      supporting_findings: { type: "array", items: { type: "string" } },
+    },
+    required: ["cpt", "diagnoses"],
+  },
+  execute(a) {
+    const cpt = String(a.cpt ?? "").trim();
+    const diagnoses: string[] = a.diagnoses ?? [];
+    if (!cpt) return { success: false, error: "'cpt' is required" };
+    if (!diagnoses.length) return { success: false, error: "At least one supporting diagnosis is required" };
+    const svc = a.service_description || `the requested service (${cpt})`;
+    const indications: string[] = a.clinical_indications ?? [];
+    const findings: string[] = a.supporting_findings ?? [];
+    const failed: string[] = a.failed_conservative ?? [];
+    const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+    const parts = [`${cap(svc)} is medically necessary for this patient, who presents with ${diagnoses.join(", ")}.`];
+    if (indications.length) parts.push("Clinical indications supporting the service include: " + indications.join("; ") + ".");
+    if (findings.length) parts.push("Objective findings documented: " + findings.join("; ") + ".");
+    if (failed.length) parts.push("Conservative management has been attempted without adequate response, including: " + failed.join("; ") + ".");
+    parts.push(`Given the above, ${svc} is reasonable and necessary to diagnose or treat the documented condition(s) and is consistent with accepted standards of care.`);
+    const checklist = [
+      { item: "Diagnosis codes linked to the service", satisfied: diagnoses.length > 0 },
+      { item: "Clinical indication documented", satisfied: indications.length > 0 },
+      { item: "Objective findings (imaging/labs/exam)", satisfied: findings.length > 0 },
+      { item: "Conservative treatment tried/failed", satisfied: failed.length > 0 },
+    ];
+    const missing = checklist.filter((c) => !c.satisfied).map((c) => c.item);
+    return {
+      success: true,
+      data: {
+        cpt, rationale: parts.join(" "), documentation_checklist: checklist, missing_documentation: missing,
+        strength: missing.length === 0 ? "strong" : missing.length <= 2 ? "moderate" : "weak",
+      },
+    };
+  },
+};
+
+// --------------------------------------------------------------------------
+// HCC capture gap finder (sample model)
+// --------------------------------------------------------------------------
+const ICD_TO_HCC: Record<string, [string, string, number]> = {
+  "E11.9": ["HCC19", "Diabetes without complication", 0.105],
+  "E11.4": ["HCC18", "Diabetes with chronic complications", 0.302],
+  "E11.5": ["HCC18", "Diabetes with chronic complications", 0.302],
+  "I50": ["HCC85", "Congestive heart failure", 0.331],
+  "N18.5": ["HCC136", "CKD stage 5", 0.289],
+  "N18.6": ["HCC136", "ESRD/CKD stage 5", 0.289],
+  "J44": ["HCC111", "COPD", 0.328],
+  "F32": ["HCC155", "Major depression", 0.309],
+  "C50": ["HCC12", "Breast cancer", 0.15],
+  "I12": ["HCC138", "Hypertensive CKD", 0.289],
+};
+function mapDx(code: string): [string, string, number] | null {
+  const c = (code || "").toUpperCase().trim();
+  if (ICD_TO_HCC[c]) return ICD_TO_HCC[c];
+  for (const [prefix, m] of Object.entries(ICD_TO_HCC)) if (c.startsWith(prefix)) return m;
+  return null;
+}
+
+export const hccGapFinder: Skill = {
+  name: "hcc_gap_finder",
+  description:
+    "Find HCC risk-adjustment recapture gaps and suspected new HCCs; estimates RAF and revenue impact (sample model).",
+  parameters: {
+    type: "object",
+    properties: {
+      current_year_dx: { type: "array", items: { type: "string" } },
+      prior_year_hccs: { type: "array", items: { type: "string" } },
+      revenue_per_raf: { type: "number" },
+    },
+    required: ["prior_year_hccs"],
+  },
+  execute(a) {
+    const prior: string[] = a.prior_year_hccs ?? [];
+    const currentDx: string[] = a.current_year_dx ?? [];
+    const revPerRaf = Number(a.revenue_per_raf ?? 10000) || 10000;
+    const currentHccs: Record<string, any> = {};
+    for (const dx of currentDx) {
+      const m = mapDx(dx);
+      if (m) currentHccs[m[0]] = { hcc: m[0], label: m[1], raf_weight: m[2], from_dx: dx };
+    }
+    const priorSet = new Set(prior.map((h) => String(h).toUpperCase().trim()));
+    const currentSet = new Set(Object.keys(currentHccs));
+    const gaps: any[] = [];
+    let rafAtRisk = 0;
+    for (const hcc of priorSet) {
+      if (!currentSet.has(hcc)) {
+        const known = Object.values(ICD_TO_HCC).find((v) => v[0] === hcc);
+        const weight = known ? known[2] : 0;
+        rafAtRisk += weight;
+        gaps.push({ hcc, label: known ? known[1] : "Unknown HCC", raf_weight: weight, reason: "not recaptured this year" });
+      }
+    }
+    const suspected = Object.entries(currentHccs).filter(([h]) => !priorSet.has(h)).map(([, v]) => v);
+    return {
+      success: true,
+      data: {
+        recapture_gaps: gaps, suspected_new_hccs: suspected,
+        raf_at_risk: Math.round(rafAtRisk * 1000) / 1000,
+        estimated_revenue_at_risk: Math.round(rafAtRisk * revPerRaf * 100) / 100,
+        summary: {
+          prior_hccs: priorSet.size, recaptured: [...priorSet].filter((h) => currentSet.has(h)).length,
+          gaps: gaps.length, suspected_new: suspected.length,
+        },
+      },
+    };
+  },
+};
+
+// --------------------------------------------------------------------------
+// Structured extractor (general)
+// --------------------------------------------------------------------------
+const BUILTIN_PATTERNS: Record<string, string> = {
+  email: "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}",
+  phone: "(?:\\+?1[-.\\s]?)?\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4}",
+  date: "\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}|\\d{4}-\\d{2}-\\d{2}",
+  ssn: "\\b\\d{3}-\\d{2}-\\d{4}\\b",
+  mrn: "MRN[#:]?\\s*(\\d{4,})",
+  npi: "\\b\\d{10}\\b",
+  money: "\\$\\s?\\d{1,3}(?:,\\d{3})*(?:\\.\\d{2})?|\\b\\d+\\.\\d{2}\\b",
+  icd10: "\\b[A-TV-Z]\\d{2}(?:\\.\\d{1,4})?\\b",
+  cpt: "\\b\\d{5}\\b",
+  zip: "\\b\\d{5}(?:-\\d{4})?\\b",
+};
+
+export const structuredExtractor: Skill = {
+  name: "structured_extractor",
+  description:
+    "Extract structured fields from free text using typed patterns (email/phone/date/ssn/mrn/npi/money/icd10/cpt/zip) or custom regex/keyword.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["extract", "extract_all"] },
+      text: { type: "string" },
+      fields: { type: "array", items: { type: "object" } },
+    },
+    required: ["text", "fields"],
+  },
+  execute(a) {
+    const text: string = a.text;
+    const fields: any[] = a.fields ?? [];
+    const action = a.action ?? "extract";
+    if (!text) return { success: false, error: "'text' is required" };
+    if (!Array.isArray(fields) || !fields.length) return { success: false, error: "'fields' must be a non-empty list" };
+    const patternFor = (f: any): string => {
+      if (f.regex) return f.regex;
+      if (f.keyword) return `${f.keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:#-]?\\s*(.+?)(?:\\n|$)`;
+      return BUILTIN_PATTERNS[String(f.type ?? "").toLowerCase()] ?? "";
+    };
+    const results: Record<string, any> = {};
+    for (const f of fields) {
+      const name = f.name;
+      if (!name) continue;
+      const pat = patternFor(f);
+      if (!pat) { results[name] = action === "extract" ? null : []; continue; }
+      let rx: RegExp;
+      try { rx = new RegExp(pat, action === "extract_all" ? "ig" : "i"); }
+      catch (e: any) { results[name] = { error: `bad pattern: ${e?.message ?? e}` }; continue; }
+      if (action === "extract_all") {
+        const out: string[] = [];
+        for (const m of text.matchAll(rx)) out.push((m[1] ?? m[0]).trim());
+        results[name] = out;
+      } else {
+        const m = rx.exec(text);
+        results[name] = m ? (m[1] ?? m[0]).trim() : null;
+      }
+    }
+    const found = Object.values(results).filter((v) => v && (!Array.isArray(v) || v.length)).length;
+    return { success: true, data: { extracted: results, fields_requested: fields.length, fields_found: found } };
+  },
+};
+
+// --------------------------------------------------------------------------
+// Data insights (general)
+// --------------------------------------------------------------------------
+function nums(values: any[]): number[] {
+  const out: number[] = [];
+  for (const v of values) { const n = Number(v); if (isFinite(n)) out.push(n); }
+  return out;
+}
+function mean(xs: number[]): number { return xs.reduce((a, b) => a + b, 0) / xs.length; }
+function median(xs: number[]): number {
+  const s = [...xs].sort((a, b) => a - b); const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+function stdev(xs: number[]): number {
+  if (xs.length < 2) return 0; const m = mean(xs);
+  return Math.sqrt(xs.reduce((a, b) => a + (b - m) ** 2, 0) / (xs.length - 1));
+}
+
+export const dataInsights: Skill = {
+  name: "data_insights",
+  description: "Analyze an array of records: describe (stats), group_by (aggregate), or outliers (z-score).",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["describe", "group_by", "outliers"] },
+      records: { type: "array", items: { type: "object" } },
+      fields: { type: "array", items: { type: "string" } },
+      group_field: { type: "string" },
+      agg_field: { type: "string" },
+      agg: { type: "string", enum: ["sum", "mean", "count", "min", "max"] },
+      field: { type: "string" },
+      z_threshold: { type: "number" },
+    },
+    required: ["action", "records"],
+  },
+  execute(a) {
+    const records: any[] = a.records;
+    if (!Array.isArray(records)) return { success: false, error: "'records' must be a list" };
+    const r4 = (n: number) => Math.round(n * 10000) / 10000;
+    if (a.action === "describe") {
+      if (!records.length) return { success: false, error: "No records to describe" };
+      let fields: string[] = a.fields;
+      if (!fields || !fields.length) fields = Object.keys(records[0]).filter((k) => typeof records[0][k] === "number");
+      const stats: Record<string, any> = {};
+      for (const f of fields) {
+        const ns = nums(records.filter((r) => f in r).map((r) => r[f]));
+        if (!ns.length) continue;
+        stats[f] = { count: ns.length, sum: r4(ns.reduce((a, b) => a + b, 0)), mean: r4(mean(ns)), median: r4(median(ns)), min: Math.min(...ns), max: Math.max(...ns), stdev: r4(stdev(ns)) };
+      }
+      return { success: true, data: { row_count: records.length, fields: stats } };
+    }
+    if (a.action === "group_by") {
+      const gf = a.group_field;
+      if (!gf) return { success: false, error: "'group_field' is required" };
+      const groups: Record<string, any[]> = {};
+      for (const r of records) { const k = String(r[gf] ?? "∅"); (groups[k] ??= []).push(r[a.agg_field]); }
+      const out = Object.entries(groups).map(([group, vals]) => {
+        let value: number | null;
+        if (a.agg === "count" || !a.agg) value = records.filter((r) => String(r[gf] ?? "∅") === group).length;
+        else {
+          const ns = nums(vals);
+          if (!ns.length) value = null;
+          else if (a.agg === "sum") value = r4(ns.reduce((x, y) => x + y, 0));
+          else if (a.agg === "mean") value = r4(mean(ns));
+          else if (a.agg === "min") value = Math.min(...ns);
+          else if (a.agg === "max") value = Math.max(...ns);
+          else value = null;
+        }
+        return { group, agg: a.agg ?? "count", field: a.agg_field, value };
+      });
+      out.sort((x, y) => (y.value ?? -Infinity) - (x.value ?? -Infinity));
+      return { success: true, data: { groups: out, group_count: out.length } };
+    }
+    if (a.action === "outliers") {
+      const field = a.field;
+      if (!field) return { success: false, error: "'field' is required" };
+      const ns = nums(records.filter((r) => field in r).map((r) => r[field]));
+      if (ns.length < 2) return { success: false, error: "Need at least 2 numeric values" };
+      const m = mean(ns), sd = stdev(ns), z = Number(a.z_threshold ?? 2) || 2;
+      const outliers: any[] = [];
+      if (sd > 0) for (const r of records) {
+        const v = Number(r[field]); if (!isFinite(v)) continue;
+        const zs = (v - m) / sd; if (Math.abs(zs) >= z) outliers.push({ record: r, value: v, z_score: Math.round(zs * 1000) / 1000 });
+      }
+      return { success: true, data: { field, mean: r4(m), stdev: r4(sd), z_threshold: z, outliers, outlier_count: outliers.length } };
+    }
+    return { success: false, error: `Unknown action: ${a.action}` };
+  },
+};
+
 export const REGISTRY: Record<string, Skill> = {
   [rcmKpiCalculator.name]: rcmKpiCalculator,
   [emLevelAdvisor.name]: emLevelAdvisor,
   [patientCostEstimator.name]: patientCostEstimator,
+  [arPrioritizer.name]: arPrioritizer,
+  [underpaymentDetector.name]: underpaymentDetector,
+  [timelyFilingCalculator.name]: timelyFilingCalculator,
+  [modifierRecommender.name]: modifierRecommender,
+  [medicalNecessityBuilder.name]: medicalNecessityBuilder,
+  [hccGapFinder.name]: hccGapFinder,
+  [structuredExtractor.name]: structuredExtractor,
+  [dataInsights.name]: dataInsights,
 };
 
 export function toolDefinitions(names: string[]) {
