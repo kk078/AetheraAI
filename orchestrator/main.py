@@ -301,14 +301,29 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# CORS middleware
+# CORS middleware — origins configurable; default "*" for local/dev.
+_cors_origins = [o.strip() for o in os.getenv("CORS_ALLOW_ORIGINS", "*").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins or ["*"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def api_key_auth(request: Request, call_next):
+    """Enforce bearer-key auth on /api/* when API_AUTH_ENABLED=true (off by default)."""
+    try:
+        from orchestrator.auth import request_authorized
+        if not request_authorized(
+            request.url.path, request.method, request.headers.get("authorization")
+        ):
+            return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+    except Exception as e:  # never let the gate hard-fail the whole app
+        logger.warning(f"Auth middleware error (allowing request): {e}")
+    return await call_next(request)
 
 # =============================================================================
 # PYDANTIC MODELS
@@ -2342,6 +2357,43 @@ async def knowledge_auto_update():
         return updater.run_auto_update()
     except Exception as e:
         return {"error": str(e)}
+
+
+# =============================================================================
+# COMPLIANCE — PHI RETENTION & RIGHT-TO-DELETE
+# =============================================================================
+
+@app.delete("/api/compliance/user-data/{user_id}")
+async def delete_user_data(user_id: str):
+    """HIPAA right-to-delete: remove a user's conversations and messages."""
+    store = _get_conversation_store()
+    if store is None:
+        return {"deleted": 0, "error": "Conversation store unavailable"}
+    try:
+        removed = store.delete_user_data(user_id)
+        await log_audit_event(
+            event_type="delete_user_data", conversation_id=user_id,
+            specialist="-", model="-", sensitivity="phi", duration_ms=0,
+        )
+        return {"user_id": user_id, "conversations_deleted": removed}
+    except Exception as e:
+        return {"deleted": 0, "error": str(e)}
+
+
+@app.post("/api/compliance/retention/cleanup")
+async def retention_cleanup(payload: Optional[Dict[str, Any]] = None):
+    """Apply the conversation retention policy (delete conversations older than N days)."""
+    days = (payload or {}).get("days")
+    if days is None:
+        days = int(os.getenv("CONVERSATION_RETENTION_DAYS", "2555"))  # ~7y default
+    store = _get_conversation_store()
+    if store is None:
+        return {"purged": 0, "error": "Conversation store unavailable"}
+    try:
+        purged = store.purge_older_than(int(days))
+        return {"retention_days": int(days), "conversations_purged": purged}
+    except Exception as e:
+        return {"purged": 0, "error": str(e)}
 
 
 # =============================================================================

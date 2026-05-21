@@ -1,0 +1,66 @@
+# Aethera AI - HIPAA-hardening Compose overlay.
+#
+# Use ALONGSIDE docker-compose.yml when handling PHI:
+#   docker compose -f docker-compose.yml -f docker-compose.secure.yml up -d
+#
+# This overlay does two things the base stack does not:
+#   1. Encryption at rest — points the data volumes at host paths that MUST be
+#      on an encrypted filesystem (e.g. a LUKS-mounted disk). Set DATA_ROOT to
+#      that mount. Docker cannot encrypt a volume for you; the host must.
+#   2. Network isolation — keeps backing services (chromadb, redis, searxng,
+#      litellm) on an internal-only network with no host port exposure, so PHI
+#      never traverses a host-published plaintext port. Only the orchestrator/UI
+#      are reachable, and those should sit behind TLS (Cloudflare Tunnel/Access
+#      or a TLS-terminating reverse proxy) — never exposed in cleartext.
+#
+# Required: DATA_ROOT must be a path on an encrypted volume, e.g.
+#   DATA_ROOT=/mnt/luks-aethera docker compose -f docker-compose.yml -f docker-compose.secure.yml up -d
+
+services:
+  orchestrator:
+    environment:
+      PHI_DETECTION_ENABLED: "true"
+      AUDIT_LOGGING_ENABLED: "true"
+      API_AUTH_ENABLED: "true"            # require bearer keys on /api/* (set API_KEYS)
+      # ENCRYPTION_KEY / BACKUP_ENCRYPTION_KEY must be provided via your secret store.
+
+  chromadb:
+    ports: []          # remove host port exposure
+    networks: [internal]
+
+  redis:
+    ports: []
+    networks: [internal]
+
+  searxng:
+    ports: []
+    networks: [internal]
+
+  litellm:
+    ports: []
+    networks: [internal]
+
+# Bind the persistent data onto an encrypted host path. Override DATA_ROOT.
+volumes:
+  aethera-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_ROOT:-./data}/aethera
+  chroma-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_ROOT:-./data}/chroma
+  redis-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_ROOT:-./data}/redis
+
+networks:
+  internal:
+    internal: true

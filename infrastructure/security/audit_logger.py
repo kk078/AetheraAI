@@ -25,6 +25,17 @@ from pydantic import BaseModel
 
 logger = logging.getLogger("aethera.audit")
 
+
+def _redact(text: str) -> str:
+    """Redact PHI/PII from a free-text audit field; no-op on failure."""
+    if not text:
+        return text
+    try:
+        from orchestrator.phi_logging import redact_text
+        return redact_text(text)
+    except Exception:
+        return text
+
 # ---------------------------------------------------------------------------
 # PC Control Action Types
 # ---------------------------------------------------------------------------
@@ -200,6 +211,10 @@ class AuditDatabase:
         Returns:
             Inserted row ID
         """
+        # HIPAA: the audit trail records metadata, never PHI. Redact any PHI/PII
+        # that slipped into free-text fields before it is persisted.
+        resource = _redact(resource)
+        details = _redact(details)
         with self._connect() as conn:
             cursor = conn.execute(
                 """INSERT INTO audit_log

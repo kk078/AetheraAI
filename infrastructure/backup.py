@@ -56,9 +56,49 @@ class BackupManager:
             or os.environ.get("ENCRYPTION_KEY")
         )
 
+        # Optional off-site copy to a (BAA-covered) Cloudflare R2 bucket.
+        self._r2_bucket = os.environ.get("BACKUP_R2_BUCKET")
+        self._r2_account = os.environ.get("R2_ACCOUNT_ID")
+        self._r2_key_id = os.environ.get("R2_ACCESS_KEY_ID")
+        self._r2_secret = os.environ.get("R2_SECRET_ACCESS_KEY")
+
     @property
     def encryption_enabled(self) -> bool:
         return bool(self._encryption_key)
+
+    @property
+    def r2_enabled(self) -> bool:
+        return bool(self._r2_bucket and self._r2_account and self._r2_key_id and self._r2_secret)
+
+    def upload_backup(self, path: str) -> bool:
+        """Upload a backup file to the configured R2 bucket (S3-compatible).
+
+        Refuses to upload an unencrypted backup to R2 (PHI must be encrypted
+        before leaving the host). Returns True on success, False otherwise.
+        """
+        if not self.r2_enabled:
+            return False
+        if not str(path).endswith(ENCRYPTED_SUFFIX):
+            print("Refusing to upload unencrypted backup to R2; set a backup encryption key.")
+            return False
+        try:
+            import boto3  # optional dependency
+        except ImportError:
+            print("boto3 not installed; cannot upload backup to R2.")
+            return False
+        try:
+            client = boto3.client(
+                "s3",
+                endpoint_url=f"https://{self._r2_account}.r2.cloudflarestorage.com",
+                aws_access_key_id=self._r2_key_id,
+                aws_secret_access_key=self._r2_secret,
+                region_name="auto",
+            )
+            client.upload_file(str(path), self._r2_bucket, Path(path).name)
+            return True
+        except Exception as e:
+            print(f"R2 upload failed: {e}")
+            return False
 
     def _derive_fernet(self, salt: bytes):
         """Derive a Fernet instance from the passphrase and a per-file salt."""
@@ -234,10 +274,12 @@ class BackupManager:
         return deleted
 
     async def scheduled_backup(self, interval_hours: int = 24):
-        """Run scheduled backups."""
+        """Run scheduled backups, uploading off-site to R2 when configured."""
         while True:
             await asyncio.sleep(interval_hours * 3600)
-            self.create_backup()
+            path = self.create_backup()
+            if self.r2_enabled:
+                self.upload_backup(path)
             self.delete_old_backups()
 
 

@@ -81,6 +81,21 @@ class PHIRedactionFilter(logging.Filter):
         return True
 
 
+_shared_filter: PHIRedactionFilter = None
+
+
+def redact_text(text: str) -> str:
+    """Redact PHI/PII from an arbitrary string (e.g. before persisting it).
+
+    Uses a shared filter instance so callers outside the logging path (such as
+    the audit trail) get the same redaction as logs.
+    """
+    global _shared_filter
+    if _shared_filter is None:
+        _shared_filter = PHIRedactionFilter()
+    return _shared_filter.redact(text or "")
+
+
 def install_phi_log_redaction(logger_name: str = "") -> PHIRedactionFilter:
     """Attach the redaction filter to a logger and all of its handlers.
 
