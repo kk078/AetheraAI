@@ -6,7 +6,13 @@ the specific services you use — R2, D1, Workers KV, Workers — are in scope) 
 prerequisite before any PHI is routed through Cloudflare. A BAA alone does not
 make a deployment compliant; the controls below must also be in place.
 
-Legend: **[done]** already in code · **[config]** operator must set · **[todo]** code work needed before PHI
+> **Deployment model: single user.** This is a self-hosted, single-operator
+> deployment — the owner is the only user. The API bearer key therefore *is* the
+> access control (one key = the owner); there is no multi-tenant data to isolate,
+> so per-user authorization is out of scope. The "minimum necessary" and access
+> controls below are about protecting the one account, not separating users.
+
+Legend: **[done]** already in code · **[config]** operator must set · **[todo]** code work needed before PHI · **n/a** not applicable to a single-user deployment
 
 ## 1. Encryption in transit
 - **[config]** Expose the orchestrator/UI only over TLS (Cloudflare Tunnel or a TLS-terminating proxy). Never serve `:8000`/`:5173` in cleartext.
@@ -27,8 +33,9 @@ Legend: **[done]** already in code · **[config]** operator must set · **[todo]
 
 ## 4. Access controls
 - **[config]** Front the app with Cloudflare Access (Zero Trust) + SSO/OTP; no anonymous access to PHI endpoints.
-- **[done]** Optional bearer-key gate on `/api/*` (`orchestrator/auth.py`), enabled with `API_AUTH_ENABLED=true` + `API_KEYS`; off by default. The `docker-compose.secure.yml` overlay turns it on. The UI sends the key as a bearer token (set it in Settings → Privacy & Security, or via the `VITE_API_KEY` build var). Note: WebSocket endpoints are not covered by the HTTP auth middleware.
-- **[todo]** Per-user authorization — scope each `user_id`'s records so authenticated users can't read each other's data. (Requires a user-identity model; the key gate above is authentication only.)
+- **[done]** Bearer-key gate on `/api/*` (`orchestrator/auth.py`), enabled with `API_AUTH_ENABLED=true` + `API_KEYS`; off by default. The `docker-compose.secure.yml` overlay turns it on. The UI sends the key as a bearer token (set it in Settings → Privacy & Security, or via the `VITE_API_KEY` build var).
+- **[done]** WebSocket auth: `/api/voice/stream`, `/api/pc/ws`, and `/api/pc/confirmations` validate the key via a `?token=` query param and reject unauthorized handshakes (close 1008); the UI appends it automatically.
+- **n/a** Per-user authorization — out of scope for this single-user deployment (no other users to isolate). The bearer key authenticates the sole owner.
 - **[config]** Keep `AUDIT_LOGGING_ENABLED=true`; restrict `CORS_ALLOW_ORIGINS` (no `*`) for PHI deployments.
 - **[config]** Least-privilege on the Cloudflare API token and host/DB credentials.
 
