@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { api } from '../utils/api';
 
 const DEFAULT_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/api/voice/stream';
 const INITIAL_RECONNECT_DELAY_MS = 1000;
@@ -72,7 +73,13 @@ export function useWebSocket(url = DEFAULT_URL, options = {}) {
 
     let ws;
     try {
-      ws = new WebSocket(url);
+      // Browsers can't set headers on WebSockets, so pass the API key as a
+      // ?token= query param (the server checks it when API auth is enabled).
+      const key = api.getApiKey();
+      const finalUrl = key
+        ? `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(key)}`
+        : url;
+      ws = new WebSocket(finalUrl);
     } catch (err) {
       setError(err.message);
       onErrorRef.current?.(err);

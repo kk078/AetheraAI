@@ -41,6 +41,20 @@ def test_enabled_requires_valid_key(monkeypatch):
     assert auth.request_authorized("/api/chat", "POST", "Bearer nope") is False
 
 
+def test_ws_authorized(monkeypatch):
+    # Disabled → any (or no) token is accepted.
+    monkeypatch.setenv("API_AUTH_ENABLED", "false")
+    assert auth.ws_authorized(None) is True
+
+    # Enabled → token must match a configured key.
+    monkeypatch.setenv("API_AUTH_ENABLED", "true")
+    monkeypatch.setenv("API_KEYS", "ws-key")
+    assert auth.ws_authorized("ws-key") is True
+    assert auth.ws_authorized("nope") is False
+    assert auth.ws_authorized(None) is False
+    assert auth.ws_authorized("") is False
+
+
 def test_enabled_allows_public_and_non_api(monkeypatch):
     monkeypatch.setenv("API_AUTH_ENABLED", "true")
     monkeypatch.setenv("API_KEYS", "k")

@@ -53,6 +53,19 @@ def check_api_key(auth_header: Optional[str], keys: Iterable[str]) -> bool:
     return any(hmac.compare_digest(token, k) for k in keys)
 
 
+def ws_authorized(token: Optional[str]) -> bool:
+    """Authorize a WebSocket handshake by its `?token=` query param.
+
+    Browsers can't set headers on WebSocket connections, so the key is passed as
+    a query parameter instead. Open when auth is disabled.
+    """
+    if not is_auth_enabled():
+        return True
+    if not token:
+        return False
+    return check_api_key(f"Bearer {token}", allowed_keys())
+
+
 def is_public_path(path: str) -> bool:
     if path in PUBLIC_PATHS:
         return True

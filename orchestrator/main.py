@@ -325,6 +325,22 @@ async def api_key_auth(request: Request, call_next):
         logger.warning(f"Auth middleware error (allowing request): {e}")
     return await call_next(request)
 
+
+async def _ws_auth_ok(websocket: WebSocket) -> bool:
+    """Reject a WebSocket handshake when API auth is on and ?token= is missing/invalid.
+
+    Returns True if the connection may proceed (caller then calls accept()).
+    """
+    try:
+        from orchestrator.auth import ws_authorized
+        if ws_authorized(websocket.query_params.get("token")):
+            return True
+    except Exception as e:
+        logger.warning(f"WS auth check error (allowing): {e}")
+        return True
+    await websocket.close(code=1008)  # policy violation
+    return False
+
 # =============================================================================
 # PYDANTIC MODELS
 # =============================================================================
@@ -3466,6 +3482,8 @@ async def voice_stream(websocket: WebSocket):
       {"type": "cancel"} — discard buffered audio
     Binary messages are audio chunks appended to the buffer.
     """
+    if not await _ws_auth_ok(websocket):
+        return
     await websocket.accept()
     audio_buffer = bytearray()
     is_recording = False
@@ -3935,6 +3953,8 @@ class PCConfirmationRequest(BaseModel):
 @app.websocket("/api/pc/ws")
 async def pc_control_ws(websocket: WebSocket):
     """WebSocket endpoint for host agent connection."""
+    if not await _ws_auth_ok(websocket):
+        return
     await websocket.accept()
     manager = _get_pc_control_manager()
     agent_id = None
@@ -4016,6 +4036,8 @@ async def get_pc_status():
 @app.websocket("/api/pc/confirmations")
 async def pc_confirmations_ws(websocket: WebSocket):
     """WebSocket for UI to receive confirmation requests in real-time."""
+    if not await _ws_auth_ok(websocket):
+        return
     await websocket.accept()
     manager = _get_pc_control_manager()
     manager.register_confirmation_ws(websocket)
