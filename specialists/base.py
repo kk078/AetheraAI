@@ -591,6 +591,58 @@ TOOL_DEFINITIONS: Dict[str, Dict[str, Any]] = {
             }
         }
     },
+    "ar_prioritizer": {
+        "type": "function",
+        "function": {
+            "name": "ar_prioritizer",
+            "description": "Prioritize an AR worklist by aging, dollars-at-risk, and payer collectibility; flags timely-filing risk.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["prioritize", "aging_summary"], "description": "Ranked worklist or bucket totals"},
+                    "accounts": {"type": "array", "items": {"type": "object"}, "description": "AR accounts (account_id, balance, age_days/date_of_service, payer_class)"},
+                    "limit": {"type": "integer", "description": "Max accounts in the ranked worklist"}
+                },
+                "required": ["accounts"]
+            }
+        }
+    },
+    "rcm_kpi_calculator": {
+        "type": "function",
+        "function": {
+            "name": "rcm_kpi_calculator",
+            "description": "Compute revenue-cycle KPIs (days in AR, clean claim/denial/collection rates, AR>90) from raw figures and grade vs benchmarks.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "total_ar": {"type": "number"},
+                    "average_daily_charges": {"type": "number"},
+                    "total_charges": {"type": "number"},
+                    "total_payments": {"type": "number"},
+                    "contractual_adjustments": {"type": "number"},
+                    "total_claims": {"type": "integer"},
+                    "clean_claims": {"type": "integer"},
+                    "denied_claims": {"type": "integer"},
+                    "ar_over_90": {"type": "number"}
+                }
+            }
+        }
+    },
+    "underpayment_detector": {
+        "type": "function",
+        "function": {
+            "name": "underpayment_detector",
+            "description": "Detect payer underpayments by comparing paid amounts to contractually-expected rates per claim line; totals recoverable variance.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lines": {"type": "array", "items": {"type": "object"}, "description": "Claim lines (cpt, units, expected_rate, paid_amount)"},
+                    "tolerance": {"type": "number", "description": "Dollar tolerance before flagging"}
+                },
+                "required": ["lines"]
+            }
+        }
+    },
 }
 
 

@@ -48,6 +48,9 @@ specialists:
       - npi_lookup
       - prior_auth
       - medical_calculator
+      - ar_prioritizer
+      - rcm_kpi_calculator
+      - underpayment_detector
 
   healthcare_payer:
     enabled: true
@@ -161,6 +164,8 @@ specialists:
       - calculator
       - data_visualizer
       - spreadsheet_analyzer
+      - rcm_kpi_calculator
+      - ar_prioritizer
 
   healthcare_it:
     enabled: true
