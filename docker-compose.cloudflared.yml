@@ -1,0 +1,33 @@
+# Aethera AI - Cloudflare Tunnel overlay (publish to the internet).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.cloudflared.yml up -d
+#
+# Runs a cloudflared connector that exposes the stack at your domain WITHOUT
+# opening any inbound ports. Pair with Cloudflare Access (Zero Trust) so the
+# site requires a login (email one-time-passcode) before any traffic reaches
+# the app — see docs/PUBLISH.md.
+#
+# Token mode (recommended): create a tunnel named "aethera" in the Cloudflare
+# dashboard (Zero Trust > Networks > Tunnels), copy its token into
+# CLOUDFLARE_TUNNEL_TOKEN in .env, then add these public hostnames on that
+# tunnel (cloudflared reaches the other containers by service name):
+#   ai.aetherahealthcare.com   Path: api/*   ->  http://orchestrator:8000
+#   ai.aetherahealthcare.com   Path: ws*     ->  http://orchestrator:8000
+#   ai.aetherahealthcare.com   (no path)     ->  http://ui:80
+# Cloudflare creates the ai.aetherahealthcare.com DNS record automatically.
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: aethera-cloudflared
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    restart: unless-stopped
+    depends_on:
+      orchestrator:
+        condition: service_started
+      ui:
+        condition: service_started
+    networks:
+      - default
