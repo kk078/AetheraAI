@@ -39,7 +39,7 @@ app.post("/api/skills/:name/execute", async (c) => {
   const skill = REGISTRY[c.req.param("name")];
   if (!skill) return c.json({ error: "Skill not found" }, 404);
   const args = await c.req.json().catch(() => ({}));
-  return c.json(skill.execute(args));
+  return c.json(await skill.execute(args, { env: c.env }));
 });
 
 app.get("/api/specialists", (c) =>
@@ -79,6 +79,7 @@ app.post("/api/chat", async (c) => {
 
   const result = await runAgentLoop(messages, model, routing.recommended_tools, {
     llmClient: makeLLMClient(c.env),
+    ctx: { env: c.env },
   });
 
   try {

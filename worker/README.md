@@ -11,11 +11,13 @@ stack. **Phase 1 is a vertical slice**, not feature parity with the Python app.
 - **Router + specialists** (`src/router.ts`, `src/specialists.ts`) — config-driven
   keyword routing (port of `orchestrator/router.py` + `config.yaml`). `/api/chat`
   routes the query to a specialist and uses its system prompt + tool set.
-- **Skills** (`src/skills.ts`) — 11 ported: `rcm_kpi_calculator`,
+- **Skills** (`src/skills.ts`) — 14 ported. Pure-logic: `rcm_kpi_calculator`,
   `em_level_advisor`, `patient_cost_estimator`, `ar_prioritizer`,
   `underpayment_detector`, `timely_filing_calculator`, `modifier_recommender`,
   `medical_necessity_builder`, `hcc_gap_finder`, `structured_extractor`,
-  `data_insights`. (These are the self-contained, pure-logic skills.)
+  `data_insights`. **Data-backed (datasets in D1)**: `code_lookup` (code_set),
+  `fee_schedule` (fee_rvu + gpci), `denial_analyzer` (denial_code). Skills get an
+  optional `ctx` with the D1 binding; pure skills ignore it.
 - **D1** (`DB`) for conversations/messages, **KV** (`CACHE`, = `aethera-ai-cache`),
   **R2** (`ASSETS_BUCKET`, = `aethera-ai-assets`).
 - **Auth** (`src/auth.ts`) — bearer-key gate on `/api/*` (`API_AUTH_ENABLED`),
@@ -43,12 +45,10 @@ npm run deploy                # wrangler deploy
 CI deploys both Worker and Pages via `.github/workflows/deploy-cloudflare.yml`.
 
 ## Not yet ported (roadmap)
-- **Data-backed healthcare skills** (`code_lookup`, `fee_schedule`, `cci_editor`,
-  `denial_analyzer`, `eligibility_checker`, `drug_reference`, `ndc_pricer`,
-  `drg_grouper`, `apc_grouper`, `claim_scrubber`, …) — these embed large
-  reference datasets (code sets, MPFS, NCCI, CARC/RARC, benefit tables). They
-  need their datasets ported (likely into D1/KV/R2) rather than a blind logic
-  port, so they're deferred to avoid shipping subtly-wrong clinical/billing data.
+- **More data-backed skills** (`cci_editor`, `eligibility_checker`,
+  `drug_reference`, `ndc_pricer`, `drg_grouper`, `apc_grouper`, `claim_scrubber`,
+  …) — follow the same pattern as phase 3: seed the dataset into D1, query it
+  from the skill. (`code_lookup` / `fee_schedule` / `denial_analyzer` are done.)
 - **Memory / RAG** → **Vectorize**; **sensitivity/PHI routing**; **proactive
   scheduler** → **Cron Triggers + Queues**; **plugins/connectors**; **voice**.
 - Local-only features (local Ollama, Whisper/Piper) don't exist serverless — all

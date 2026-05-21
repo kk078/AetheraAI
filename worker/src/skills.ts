@@ -1,6 +1,7 @@
-// Ported skills (phase 1). Pure functions — no Worker bindings — so they're
-// unit-testable and safe. The Python app has ~28 skills; these three seed the
-// registry and the rest get ported incrementally.
+// Ported skills (phases 1-2 pure-logic, phase 3 data-backed via D1). Pure skills
+// ignore the optional ctx; data-backed skills read ctx.env.DB (D1).
+
+import type { Env } from "./types";
 
 export interface SkillResult {
   success: boolean;
@@ -8,11 +9,15 @@ export interface SkillResult {
   error?: string;
 }
 
+export interface SkillContext {
+  env: Env;
+}
+
 export interface Skill {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
-  execute: (args: Record<string, any>) => SkillResult;
+  execute: (args: Record<string, any>, ctx?: SkillContext) => SkillResult | Promise<SkillResult>;
 }
 
 function safeDiv(n: any, d: any): number | null {
@@ -707,6 +712,233 @@ export const dataInsights: Skill = {
   },
 };
 
+// ==========================================================================
+// Phase 3 — data-backed skills (datasets live in D1: code_set / fee_rvu /
+// gpci / denial_code). These require ctx.env.DB.
+// ==========================================================================
+
+function noDb(): SkillResult {
+  return { success: false, error: "Datastore unavailable" };
+}
+
+function detectCodeType(code: string): string {
+  const c = code.toUpperCase();
+  if (/^[A-Z]\d{2}/.test(c)) {
+    if (c.startsWith("D") && /^D\d{4}$/.test(c)) return "cdt";
+    if (/^[A-Z]\d{4}$/.test(c)) return "hcpcs";
+    return "icd10cm";
+  }
+  if (/^\d{5}$/.test(c)) return "cpt";
+  return "unknown";
+}
+
+export const codeLookup: Skill = {
+  name: "code_lookup",
+  description: "Search ICD-10-CM, CPT, HCPCS, CDT codes by code or keyword (data in D1).",
+  parameters: {
+    type: "object",
+    properties: {
+      code: { type: "string", description: "Exact code, e.g. E11.9, 99213, A0428" },
+      code_type: { type: "string", enum: ["icd10cm", "icd10pcs", "cpt", "hcpcs", "cdt", "revenue"] },
+      search: { type: "string", description: "Keyword search (if code not provided)" },
+      include_children: { type: "boolean" },
+    },
+  },
+  async execute(a, ctx) {
+    const db = ctx?.env?.DB;
+    if (!db) return noDb();
+    const code = String(a.code ?? "").toUpperCase().trim();
+    const search = String(a.search ?? "").trim();
+    if (!code && !search) return { success: false, error: "Either code or search term is required" };
+    try {
+      if (code) {
+        const row = await db.prepare(
+          "SELECT code, code_type, description, parent FROM code_set WHERE code = ?1",
+        ).bind(code).first<any>();
+        if (!row) {
+          return { success: true, data: { code, code_type: a.code_type || detectCodeType(code), description: "Not found in local cache", valid: false } };
+        }
+        const out: any = { code: row.code, code_type: row.code_type, description: row.description, valid: true };
+        if (a.include_children && row.parent) {
+          const kids = await db.prepare("SELECT code, description FROM code_set WHERE parent = ?1").bind(row.code.split(".")[0]).all<any>();
+          out.children = kids.results ?? [];
+        }
+        return { success: true, data: out };
+      }
+      // keyword search
+      let stmt;
+      if (a.code_type) {
+        stmt = db.prepare("SELECT code, code_type, description FROM code_set WHERE description LIKE ?1 AND code_type = ?2 LIMIT 25").bind(`%${search}%`, a.code_type);
+      } else {
+        stmt = db.prepare("SELECT code, code_type, description FROM code_set WHERE description LIKE ?1 LIMIT 25").bind(`%${search}%`);
+      }
+      const res = await stmt.all<any>();
+      return { success: true, data: { search_term: search, code_type: a.code_type ?? null, results: res.results ?? [], total: (res.results ?? []).length } };
+    } catch (e: any) {
+      return { success: false, error: String(e?.message ?? e) };
+    }
+  },
+};
+
+const CONVERSION_FACTOR = 33.2875;
+const MODIFIER_ADJ: Record<string, { work: number; pe: number; mp: number; description: string }> = {
+  "26": { work: 1.0, pe: 0.0, mp: 0.0, description: "Professional component only" },
+  TC: { work: 0.0, pe: 1.0, mp: 1.0, description: "Technical component only" },
+  "50": { work: 1.5, pe: 1.5, mp: 1.5, description: "Bilateral procedure" },
+  "80": { work: 0.16, pe: 0.16, mp: 0.16, description: "Assistant surgeon" },
+};
+
+export const feeSchedule: Skill = {
+  name: "fee_schedule",
+  description:
+    "Look up Medicare MPFS RVUs and calculate the allowed amount by locality (RVU x GPCI x conversion factor); data in D1.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["lookup", "calculate", "compare_localities"] },
+      cpt_code: { type: "string" },
+      locality: { type: "string", description: "CMS locality code (default 01010); comma-separated for compare" },
+      modifier: { type: "string" },
+    },
+    required: ["action"],
+  },
+  async execute(a, ctx) {
+    const db = ctx?.env?.DB;
+    if (!db) return noDb();
+    const action = a.action;
+    const cpt = String(a.cpt_code ?? "").trim();
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    const r4 = (n: number) => Math.round(n * 10000) / 10000;
+    try {
+      const getRvu = (c: string) => db.prepare("SELECT * FROM fee_rvu WHERE cpt = ?1").bind(c).first<any>();
+      const getGpci = (loc: string) => db.prepare("SELECT * FROM gpci WHERE locality = ?1").bind(loc).first<any>();
+
+      if (action === "lookup") {
+        if (!cpt) return { success: false, error: "cpt_code is required for lookup" };
+        const rvu = await getRvu(cpt);
+        if (!rvu) return { success: false, error: `CPT ${cpt} not found in fee schedule` };
+        const total = rvu.work_rvu + rvu.pe_rvu_nf + rvu.mp_rvu_nf;
+        return { success: true, data: {
+          conversion_factor: CONVERSION_FACTOR, cpt_code: cpt, description: rvu.description,
+          work_rvu: rvu.work_rvu, pe_rvu_nf: rvu.pe_rvu_nf, mp_rvu_nf: rvu.mp_rvu_nf,
+          total_rvu_nf: r4(total), national_average_allowed: r2(total * CONVERSION_FACTOR),
+        } };
+      }
+
+      if (action === "calculate") {
+        if (!cpt) return { success: false, error: "cpt_code is required for calculate" };
+        const rvu = await getRvu(cpt);
+        if (!rvu) return { success: false, error: `CPT ${cpt} not found in fee schedule` };
+        const loc = String(a.locality ?? "01010").trim() || "01010";
+        const gpci = await getGpci(loc);
+        if (!gpci) return { success: false, error: `Locality ${loc} not found` };
+        const mod = String(a.modifier ?? "").trim().toUpperCase();
+        const m = MODIFIER_ADJ[mod];
+        const wMul = m ? m.work : 1, peMul = m ? m.pe : 1, mpMul = m ? m.mp : 1;
+        const workC = rvu.work_rvu * wMul * gpci.work_gpci;
+        const peC = rvu.pe_rvu_nf * peMul * gpci.pe_gpci;
+        const mpC = rvu.mp_rvu_nf * mpMul * gpci.mp_gpci;
+        const allowed = (workC + peC + mpC) * CONVERSION_FACTOR;
+        return { success: true, data: {
+          cpt_code: cpt, description: rvu.description, locality: gpci.name, locality_code: loc,
+          modifier: mod || "None",
+          components: { work_component: r4(workC), pe_component: r4(peC), mp_component: r4(mpC) },
+          conversion_factor: CONVERSION_FACTOR, allowed_amount: r2(allowed),
+          modifier_info: m ? { description: m.description } : null,
+        } };
+      }
+
+      if (action === "compare_localities") {
+        if (!cpt) return { success: false, error: "cpt_code is required for compare_localities" };
+        const rvu = await getRvu(cpt);
+        if (!rvu) return { success: false, error: `CPT ${cpt} not found in fee schedule` };
+        const locs = String(a.locality ?? "").split(",").map((l: string) => l.trim()).filter(Boolean);
+        const comparisons = [];
+        for (const loc of locs) {
+          const gpci = await getGpci(loc);
+          if (!gpci) { comparisons.push({ locality_code: loc, error: "not found" }); continue; }
+          const allowed = (rvu.work_rvu * gpci.work_gpci + rvu.pe_rvu_nf * gpci.pe_gpci + rvu.mp_rvu_nf * gpci.mp_gpci) * CONVERSION_FACTOR;
+          comparisons.push({ locality_code: loc, locality: gpci.name, allowed_amount: r2(allowed) });
+        }
+        comparisons.sort((x: any, y: any) => (y.allowed_amount ?? 0) - (x.allowed_amount ?? 0));
+        return { success: true, data: { cpt_code: cpt, description: rvu.description, comparisons } };
+      }
+      return { success: false, error: `Unknown action: ${action}` };
+    } catch (e: any) {
+      return { success: false, error: String(e?.message ?? e) };
+    }
+  },
+};
+
+const APPEAL_RECS: Record<string, { rec: string; docs: string[]; timeline?: string }> = {
+  "CO-4": { rec: "Submit corrected claim with appropriate modifier", docs: ["Operative report supporting modifier use"] },
+  "CO-11": { rec: "Submit appeal with clinical documentation", docs: ["Medical records showing medical necessity", "Physician letter of medical necessity"] },
+  "CO-16": { rec: "Submit corrected claim with missing information", docs: ["Complete claim form with all required fields"] },
+  "CO-50": { rec: "File formal appeal with clinical evidence", docs: ["Complete medical records", "Peer-reviewed literature supporting treatment", "Physician statement of medical necessity"], timeline: "120 days (Medicare)" },
+  "CO-97": { rec: "Review NCCI edits and appeal if separately billable", docs: ["Documentation showing distinct procedure"] },
+};
+
+export const denialAnalyzer: Skill = {
+  name: "denial_analyzer",
+  description: "Analyze CARC/RARC denial codes (data in D1) and recommend appeal actions.",
+  parameters: {
+    type: "object",
+    properties: {
+      carc_codes: { type: "array", items: { type: "string" } },
+      rarc_codes: { type: "array", items: { type: "string" } },
+      claim_amount: { type: "number" },
+      paid_amount: { type: "number" },
+      payer: { type: "string" },
+    },
+    required: ["carc_codes"],
+  },
+  async execute(a, ctx) {
+    const db = ctx?.env?.DB;
+    if (!db) return noDb();
+    const carc: string[] = a.carc_codes ?? [];
+    const rarc: string[] = a.rarc_codes ?? [];
+    if (!carc.length) return { success: false, error: "At least one CARC code is required" };
+    try {
+      const decode = async (code: string) => {
+        const row = await db.prepare("SELECT code, ctype, description, category, appeal_priority FROM denial_code WHERE code = ?1").bind(code.toUpperCase()).first<any>();
+        return row ?? { code: code.toUpperCase(), description: `Unknown code: ${code}`, category: "unknown", appeal_priority: "medium" };
+      };
+      const decodedCarc = [];
+      for (const c of carc) decodedCarc.push(await decode(c));
+      const decodedRarc = [];
+      for (const r of rarc) decodedRarc.push(await decode(r));
+
+      // Category/priority = highest-priority CARC (high > medium > low).
+      const rank: Record<string, number> = { high: 3, medium: 2, low: 1, unknown: 0 };
+      let top = decodedCarc[0];
+      for (const d of decodedCarc) if ((rank[d.appeal_priority] ?? 0) > (rank[top.appeal_priority] ?? 0)) top = d;
+      const appealable = top.appeal_priority === "high" || top.appeal_priority === "medium";
+
+      const recommendations: string[] = [];
+      const requiredDocs: string[] = [];
+      let timeline = "30 days";
+      for (const c of carc) {
+        const r = APPEAL_RECS[c.toUpperCase()];
+        if (r) { recommendations.push(r.rec); requiredDocs.push(...r.docs); if (r.timeline) timeline = r.timeline; }
+      }
+      if (!recommendations.length) recommendations.push("Review denial reason and determine appeal viability");
+
+      const claim = Number(a.claim_amount ?? 0), paid = Number(a.paid_amount ?? 0);
+      const adjusted = claim && paid ? Math.round((claim - paid) * 100) / 100 : 0;
+
+      return { success: true, data: {
+        payer: a.payer ?? "Unknown",
+        carc: decodedCarc, rarc: decodedRarc,
+        category: { category: top.category, appeal_priority: top.appeal_priority, appealable },
+        financials: { claim_amount: claim, paid_amount: paid, adjusted_amount: adjusted, potential_recovery: appealable ? adjusted : 0, write_off: appealable ? 0 : adjusted },
+        appeal_recommendation: { recommendations, required_documents: [...new Set(requiredDocs)], appeal_timeline: timeline, appeal_level: carc.map((c) => c.toUpperCase()).includes("CO-50") ? "Redetermination" : "Initial" },
+      } };
+    } catch (e: any) {
+      return { success: false, error: String(e?.message ?? e) };
+    }
+  },
+};
+
 export const REGISTRY: Record<string, Skill> = {
   [rcmKpiCalculator.name]: rcmKpiCalculator,
   [emLevelAdvisor.name]: emLevelAdvisor,
@@ -719,6 +951,9 @@ export const REGISTRY: Record<string, Skill> = {
   [hccGapFinder.name]: hccGapFinder,
   [structuredExtractor.name]: structuredExtractor,
   [dataInsights.name]: dataInsights,
+  [codeLookup.name]: codeLookup,
+  [feeSchedule.name]: feeSchedule,
+  [denialAnalyzer.name]: denialAnalyzer,
 };
 
 export function toolDefinitions(names: string[]) {

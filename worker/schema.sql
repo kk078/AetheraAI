@@ -19,3 +19,39 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id);
+
+-- Phase 3 reference datasets (seeded separately; sample data for now).
+CREATE TABLE IF NOT EXISTS code_set (
+  code        TEXT NOT NULL,
+  code_type   TEXT NOT NULL,
+  description TEXT NOT NULL,
+  parent      TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_code_set_code ON code_set(code);
+CREATE INDEX IF NOT EXISTS idx_code_set_parent ON code_set(parent);
+
+CREATE TABLE IF NOT EXISTS fee_rvu (
+  cpt         TEXT PRIMARY KEY,
+  work_rvu    REAL NOT NULL,
+  pe_rvu_nf   REAL NOT NULL,
+  mp_rvu_nf   REAL NOT NULL,
+  status      TEXT DEFAULT 'A',
+  description TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS gpci (
+  locality   TEXT PRIMARY KEY,
+  work_gpci  REAL NOT NULL,
+  pe_gpci    REAL NOT NULL,
+  mp_gpci    REAL NOT NULL,
+  name       TEXT DEFAULT '',
+  state      TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS denial_code (
+  code            TEXT PRIMARY KEY,
+  ctype           TEXT NOT NULL,
+  description     TEXT NOT NULL,
+  category        TEXT DEFAULT 'unknown',
+  appeal_priority TEXT DEFAULT 'medium'
+);

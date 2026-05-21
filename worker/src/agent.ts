@@ -1,6 +1,6 @@
 import type { ChatMessage, ToolCall } from "./types";
 import type { LLMClient } from "./llm";
-import { REGISTRY, toolDefinitions, type SkillResult } from "./skills";
+import { REGISTRY, toolDefinitions, type SkillResult, type SkillContext } from "./skills";
 
 const DEFAULT_MAX_ITERATIONS = 8;
 
@@ -33,14 +33,14 @@ function parseArgs(raw: unknown): [Record<string, any> | null, string | null] {
   }
 }
 
-async function executeToolCall(tc: ToolCall): Promise<ToolInvocation> {
+async function executeToolCall(tc: ToolCall, ctx?: SkillContext): Promise<ToolInvocation> {
   const name = tc.function?.name || "unknown";
   const [args, parseErr] = parseArgs(tc.function?.arguments);
   if (parseErr) return { name, arguments: {}, success: false, error: parseErr };
   const skill = REGISTRY[name];
   if (!skill) return { name, arguments: args!, success: false, error: `Skill not found: ${name}` };
   try {
-    const res: SkillResult = skill.execute(args!);
+    const res: SkillResult = await skill.execute(args!, ctx);
     return res.success
       ? { name, arguments: args!, success: true, result: res.data }
       : { name, arguments: args!, success: false, error: res.error || "Tool execution failed" };
@@ -67,7 +67,7 @@ export async function runAgentLoop(
   messages: ChatMessage[],
   model: string,
   toolNames: string[],
-  opts: { llmClient: LLMClient; maxIterations?: number; temperature?: number; maxTokens?: number },
+  opts: { llmClient: LLMClient; ctx?: SkillContext; maxIterations?: number; temperature?: number; maxTokens?: number },
 ): Promise<AgentResult> {
   const tools = toolDefinitions(toolNames);
   const working: ChatMessage[] = [...messages];
@@ -104,7 +104,7 @@ export async function runAgentLoop(
 
     working.push({ role: "assistant", content: message.content ?? "", tool_calls: toolCalls });
     for (const tc of toolCalls) {
-      const inv = await executeToolCall(tc);
+      const inv = await executeToolCall(tc, opts.ctx);
       invocations.push(inv);
       toolsUsed.push(inv.name);
       working.push({ role: "tool", tool_call_id: tc.id, name: inv.name, content: toolContent(inv) });
