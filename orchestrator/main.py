@@ -136,6 +136,20 @@ def _get_knowledge_updater():
     return _knowledge_updater
 
 
+_phi_tracker = None
+
+
+def _get_phi_tracker():
+    global _phi_tracker
+    if _phi_tracker is None:
+        try:
+            from orchestrator.phi_guard import get_tracker
+            _phi_tracker = get_tracker()
+        except Exception as e:
+            logger.warning(f"PHI taint tracker not available: {e}")
+    return _phi_tracker
+
+
 def _get_memory_manager():
     global _memory_manager
     if _memory_manager is None:
@@ -248,6 +262,13 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("aethera-orchestrator")
+
+# Redact PHI/PII from all log output before it is emitted.
+try:
+    from orchestrator.phi_logging import install_phi_log_redaction
+    install_phi_log_redaction()  # attaches to the root logger + its handlers
+except Exception as _e:  # never block startup on logging setup
+    logger.warning(f"PHI log redaction not installed: {_e}")
 
 # =============================================================================
 # MODEL DISPLAY NAMES — Human-readable names for UI
@@ -494,6 +515,18 @@ async def chat(request: ChatRequest):
     try:
         # 1. Analyze sensitivity (PHI/PII detection)
         sensitivity_result = state.sensitivity.analyze(request.message)
+
+        # 1b. Pin the whole conversation to local models once it carries PHI/PII,
+        # so a clean-looking follow-up can't route prior PHI to a cloud provider.
+        tracker = _get_phi_tracker()
+        if tracker is not None:
+            from orchestrator.phi_guard import apply_taint
+            eff_phi, eff_pii = apply_taint(
+                tracker, conversation_id,
+                sensitivity_result.contains_phi, sensitivity_result.contains_pii,
+            )
+            sensitivity_result.contains_phi = eff_phi
+            sensitivity_result.contains_pii = eff_pii
 
         # 2. Route to specialist
         routing_result = state.router.route(request.message)
