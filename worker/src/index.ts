@@ -8,6 +8,7 @@ import { REGISTRY } from "./skills";
 import { route } from "./router";
 import { SPECIALISTS, getSpecialist } from "./specialists";
 import { saveMessage, getRecentMessages, deleteUserData } from "./db";
+import { searchMemory, storeMemory, buildMemoryContext } from "./memory";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -67,7 +68,16 @@ app.post("/api/chat", async (c) => {
   const routing = route(message, body.specialist);
   const specialist = getSpecialist(routing.primary_specialist)!;
 
-  const messages: ChatMessage[] = [{ role: "system", content: specialist.system_prompt }];
+  // Semantic recall of relevant past memories (no-op until Vectorize is bound).
+  let systemPrompt = specialist.system_prompt;
+  try {
+    const memCtx = buildMemoryContext(await searchMemory(c.env, message, userId, 5));
+    if (memCtx) systemPrompt += memCtx;
+  } catch {
+    /* memory is supplementary */
+  }
+
+  const messages: ChatMessage[] = [{ role: "system", content: systemPrompt }];
   if (body.conversation_id) {
     try {
       messages.push(...(await getRecentMessages(c.env, conversationId, 10)));
@@ -89,6 +99,18 @@ app.post("/api/chat", async (c) => {
     /* persistence is best-effort */
   }
 
+  // Store this turn as a memory for future recall (background, best-effort).
+  const memoryText = `User: ${message}\nAssistant: ${result.content}`;
+  const storePromise = storeMemory(c.env, crypto.randomUUID(), memoryText, {
+    user_id: userId,
+    conversation_id: conversationId,
+  });
+  try {
+    c.executionCtx.waitUntil(storePromise);
+  } catch {
+    storePromise.catch(() => {});
+  }
+
   return c.json({
     conversation_id: conversationId,
     specialist: routing.primary_specialist,
@@ -104,6 +126,20 @@ app.post("/api/chat", async (c) => {
 app.delete("/api/compliance/user-data/:userId", async (c) => {
   const removed = await deleteUserData(c.env, c.req.param("userId"));
   return c.json({ user_id: c.req.param("userId"), conversations_deleted: removed });
+});
+
+app.post("/api/memory/search", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  if (!body.query) return c.json({ error: "'query' is required" }, 400);
+  const matches = await searchMemory(c.env, body.query, body.user_id, body.top_k ?? 5);
+  return c.json({ matches });
+});
+
+app.post("/api/memory", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  if (!body.text) return c.json({ error: "'text' is required" }, 400);
+  const stored = await storeMemory(c.env, body.id ?? crypto.randomUUID(), body.text, body.metadata ?? {});
+  return c.json({ stored });
 });
 
 export default app;

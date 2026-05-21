@@ -18,8 +18,13 @@ stack. **Phase 1 is a vertical slice**, not feature parity with the Python app.
   `data_insights`. **Data-backed (datasets in D1)**: `code_lookup` (code_set),
   `fee_schedule` (fee_rvu + gpci), `denial_analyzer` (denial_code). Skills get an
   optional `ctx` with the D1 binding; pure skills ignore it.
+- **Memory / RAG** (`src/memory.ts`) — Workers AI embeddings (`@cf/baai/bge-base-en-v1.5`)
+  + **Vectorize** for semantic recall. `/api/chat` retrieves relevant past
+  memories into the system prompt and stores each turn. No-ops gracefully until
+  the Vectorize index is created (see "Enable memory" below). Endpoints:
+  `POST /api/memory`, `POST /api/memory/search`.
 - **D1** (`DB`) for conversations/messages, **KV** (`CACHE`, = `aethera-ai-cache`),
-  **R2** (`ASSETS_BUCKET`, = `aethera-ai-assets`).
+  **R2** (`ASSETS_BUCKET`, = `aethera-ai-assets`), **Workers AI** (`AI`).
 - **Auth** (`src/auth.ts`) — bearer-key gate on `/api/*` (`API_AUTH_ENABLED`),
   defense-in-depth behind Cloudflare Access.
 
@@ -44,12 +49,19 @@ npm run deploy                # wrangler deploy
 ```
 CI deploys both Worker and Pages via `.github/workflows/deploy-cloudflare.yml`.
 
+## Enable memory (one-time)
+```bash
+cd worker
+wrangler vectorize create aethera-ai-memory --dimensions=768 --metric=cosine
+# then uncomment the [[vectorize]] block in wrangler.toml and redeploy
+```
+
 ## Not yet ported (roadmap)
 - **More data-backed skills** (`cci_editor`, `eligibility_checker`,
   `drug_reference`, `ndc_pricer`, `drg_grouper`, `apc_grouper`, `claim_scrubber`,
-  …) — follow the same pattern as phase 3: seed the dataset into D1, query it
-  from the skill. (`code_lookup` / `fee_schedule` / `denial_analyzer` are done.)
-- **Memory / RAG** → **Vectorize**; **sensitivity/PHI routing**; **proactive
-  scheduler** → **Cron Triggers + Queues**; **plugins/connectors**; **voice**.
+  …) — follow the phase-3 pattern: seed the dataset into D1, query it from the
+  skill. (`code_lookup` / `fee_schedule` / `denial_analyzer` are done.)
+- **Phase 5:** proactive scheduler → **Cron Triggers + Queues**.
+- Also: sensitivity/PHI routing, plugins/connectors, voice.
 - Local-only features (local Ollama, Whisper/Piper) don't exist serverless — all
   inference goes to cloud LLM APIs (needs a BAA for PHI).

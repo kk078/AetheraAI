@@ -17,6 +17,17 @@ id = "e8180d7db46e4fc69ce27128b6ec6628"   # aethera-ai-cache
 binding = "ASSETS_BUCKET"
 bucket_name = "aethera-ai-assets"
 
+# Workers AI — used for embeddings (memory/RAG). No resource to create.
+[ai]
+binding = "AI"
+
+# Memory/RAG vector index (phase 4). Create it ONCE, then uncomment + redeploy:
+#   wrangler vectorize create aethera-ai-memory --dimensions=768 --metric=cosine
+# Until then, memory features no-op gracefully (chat still works).
+# [[vectorize]]
+# binding = "VECTORIZE"
+# index_name = "aethera-ai-memory"
+
 [vars]
 # OpenAI-compatible chat-completions base (Ollama Cloud by default).
 LLM_BASE_URL = "https://ollama.com/v1"

@@ -2,6 +2,19 @@ export interface Env {
   DB: D1Database;
   CACHE: KVNamespace;
   ASSETS_BUCKET: R2Bucket;
+  // Optional bindings for memory/RAG (phase 4). Typed structurally so the build
+  // doesn't depend on a specific @cloudflare/workers-types Vectorize version,
+  // and so the Worker still runs when these aren't bound yet.
+  AI?: {
+    run(model: string, inputs: { text: string | string[] }): Promise<{ data: number[][] }>;
+  };
+  VECTORIZE?: {
+    upsert(vectors: Array<{ id: string; values: number[]; metadata?: Record<string, any> }>): Promise<unknown>;
+    query(
+      values: number[],
+      options?: Record<string, any>,
+    ): Promise<{ matches?: Array<{ id: string; score: number; metadata?: Record<string, any> }> }>;
+  };
   // vars
   LLM_BASE_URL: string;
   DEFAULT_MODEL: string;
