@@ -74,6 +74,7 @@ Request flow: **UI → `POST /api/chat` (orchestrator) → router → sensitivit
 - **`voice/`**, **`clipboard/`**: STT/TTS and clipboard monitoring for healthcare codes; these run on the host (Windows installers `.ps1`).
 - **`host_agent/`**: privileged host-side agent for PC control, with a `safety.py` guard layer.
 - **`ui/`**: React 18 + Vite + Tailwind + Zustand PWA. SPA served via nginx in Docker (`ui/nginx.conf`).
+- **`worker/`**: in-progress **Cloudflare-native rewrite** (phase 1 vertical slice) — a Hono/TypeScript Worker port of the orchestrator (agent loop + a few ported skills) backed by D1/KV/R2, deployed via `.github/workflows/deploy-cloudflare.yml`. The Python stack remains the source of truth until parity; do not assume the Worker is complete.
 
 ## Conventions & gotchas
 

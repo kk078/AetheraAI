@@ -1,0 +1,33 @@
+name = "aethera-ai"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+# --- Bindings (real IDs from this Cloudflare account) ---
+[[d1_databases]]
+binding = "DB"
+database_name = "aethera-ai-db"
+database_id = "92194d9c-6f40-414f-82a0-acdbc2e2dfb6"
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "e8180d7db46e4fc69ce27128b6ec6628"   # aethera-ai-cache
+
+[[r2_buckets]]
+binding = "ASSETS_BUCKET"
+bucket_name = "aethera-ai-assets"
+
+[vars]
+# OpenAI-compatible chat-completions base (Ollama Cloud by default).
+LLM_BASE_URL = "https://ollama.com/v1"
+DEFAULT_MODEL = "gpt-oss:120b-cloud"
+API_AUTH_ENABLED = "true"
+
+# Secrets — set with: wrangler secret put <NAME>
+#   OLLAMA_API_KEY   (Bearer token for LLM_BASE_URL)
+#   API_KEYS         (comma-separated bearer keys accepted on /api/*)
+
+# Custom domain is bound via the dashboard or a [[routes]] block once DNS exists:
+# [[routes]]
+# pattern = "ai.aetherahealthcare.com/api/*"
+# zone_name = "aetherahealthcare.com"

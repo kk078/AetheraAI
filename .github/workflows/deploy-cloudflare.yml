@@ -1,0 +1,55 @@
+name: Deploy to Cloudflare
+
+# Deploys the Worker API and the Pages frontend. Requires repo secrets:
+#   CLOUDFLARE_API_TOKEN  (Workers + Pages + D1 edit)
+#   CLOUDFLARE_ACCOUNT_ID
+# Worker runtime secrets (OLLAMA_API_KEY, API_KEYS) are set once out-of-band:
+#   cd worker && npx wrangler secret put OLLAMA_API_KEY
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "worker/**"
+      - "ui/**"
+      - ".github/workflows/deploy-cloudflare.yml"
+
+jobs:
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Deploy Worker
+        working-directory: worker
+        run: |
+          npm install
+          npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  pages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Build UI
+        working-directory: ui
+        run: |
+          npm install
+          npm run build
+        env:
+          VITE_API_URL: https://ai.aetherahealthcare.com
+          VITE_WS_URL: wss://ai.aetherahealthcare.com/api/voice/stream
+      - name: Deploy to Cloudflare Pages
+        working-directory: ui
+        run: npx wrangler pages deploy dist --project-name=aethera-ai
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
