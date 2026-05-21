@@ -27,7 +27,7 @@ Legend: **[done]** already in code · **[config]** operator must set · **[todo]
 
 ## 4. Access controls
 - **[config]** Front the app with Cloudflare Access (Zero Trust) + SSO/OTP; no anonymous access to PHI endpoints.
-- **[done]** Optional bearer-key gate on `/api/*` (`orchestrator/auth.py`), enabled with `API_AUTH_ENABLED=true` + `API_KEYS`; off by default. The `docker-compose.secure.yml` overlay turns it on.
+- **[done]** Optional bearer-key gate on `/api/*` (`orchestrator/auth.py`), enabled with `API_AUTH_ENABLED=true` + `API_KEYS`; off by default. The `docker-compose.secure.yml` overlay turns it on. The UI sends the key as a bearer token (set it in Settings → Privacy & Security, or via the `VITE_API_KEY` build var). Note: WebSocket endpoints are not covered by the HTTP auth middleware.
 - **[todo]** Per-user authorization — scope each `user_id`'s records so authenticated users can't read each other's data. (Requires a user-identity model; the key gate above is authentication only.)
 - **[config]** Keep `AUDIT_LOGGING_ENABLED=true`; restrict `CORS_ALLOW_ORIGINS` (no `*`) for PHI deployments.
 - **[config]** Least-privilege on the Cloudflare API token and host/DB credentials.

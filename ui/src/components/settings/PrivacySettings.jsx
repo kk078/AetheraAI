@@ -17,6 +17,14 @@ export default function PrivacySettings() {
   const [saved, setSaved] = useState(false);
   const [auditLog, setAuditLog] = useState([]);
   const [showAuditLog, setShowAuditLog] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState(api.getApiKey());
+  const [apiKeySaved, setApiKeySaved] = useState(false);
+
+  const handleSaveApiKey = () => {
+    api.setApiKey(apiKeyInput.trim());
+    setApiKeySaved(true);
+    setTimeout(() => setApiKeySaved(false), 3000);
+  };
 
   const fetchData = useCallback(async () => {
     try {
@@ -93,6 +101,43 @@ export default function PrivacySettings() {
       </div>
 
       <div className="bg-aethera-surface rounded-xl border border-aethera-border divide-y divide-aethera-border">
+        {/* API Access Key (required when the backend has API auth enabled) */}
+        <div className="p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-aethera-foreground">API Access Key</p>
+              <p className="text-xs text-aethera-text-secondary mt-0.5">
+                Sent as a bearer token. Required when the server runs with API_AUTH_ENABLED.
+              </p>
+            </div>
+            {apiKeySaved && (
+              <span className="text-xs text-green-400">Key saved</span>
+            )}
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <input
+              type="password"
+              value={apiKeyInput}
+              onChange={(e) => setApiKeyInput(e.target.value)}
+              placeholder="Paste your API key"
+              autoComplete="off"
+              className="flex-1 bg-aethera-tertiary border border-aethera-border rounded-lg px-3 py-1.5 text-sm text-aethera-foreground focus:outline-none focus:border-aethera-primary font-mono"
+            />
+            <button
+              onClick={handleSaveApiKey}
+              className="px-3 py-1.5 bg-aethera-primary text-white rounded-lg text-sm font-medium hover:bg-cyan-600 transition-colors"
+            >
+              Save Key
+            </button>
+            <button
+              onClick={() => { setApiKeyInput(''); api.setApiKey(''); setApiKeySaved(true); setTimeout(() => setApiKeySaved(false), 3000); }}
+              className="px-3 py-1.5 border border-aethera-border text-aethera-text-secondary rounded-lg text-sm hover:text-aethera-foreground hover:border-aethera-primary transition-colors"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+
         {/* PHI Routing */}
         <div className="p-4">
           <div className="flex items-center justify-between">
