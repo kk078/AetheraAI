@@ -960,7 +960,7 @@ async def list_skills(category: Optional[str] = None):
     registry = _get_skill_registry()
     if registry is None:
         return {"skills": []}
-    skills = registry.list_skills()
+    skills = registry.list()
     if category:
         skills = [s for s in skills if s.get("category") == category]
     return {"skills": skills}
@@ -1892,7 +1892,7 @@ async def enable_plugin(plugin_name: str):
         plugin = registry.get_plugin(plugin_name)
         if plugin is None:
             raise HTTPException(status_code=404, detail=f"Plugin '{plugin_name}' not found")
-        await plugin.connect(plugin.config or {})
+        await plugin.initialize()
         return {"status": "enabled", "plugin": plugin_name}
     except HTTPException:
         raise
@@ -1910,7 +1910,7 @@ async def disable_plugin(plugin_name: str):
         plugin = registry.get_plugin(plugin_name)
         if plugin is None:
             raise HTTPException(status_code=404, detail=f"Plugin '{plugin_name}' not found")
-        await plugin.disconnect()
+        await plugin.cleanup()
         return {"status": "disabled", "plugin": plugin_name}
     except HTTPException:
         raise
@@ -1954,7 +1954,7 @@ async def connect_to_source(connector_name: str, config: Dict[str, Any]):
         connector = registry.get_connector(connector_name)
         if connector is None:
             raise HTTPException(status_code=404, detail=f"Connector '{connector_name}' not found")
-        result = await connector.initialize(config)
+        result = await connector.initialize()
         return {"status": "connected" if result else "failed", "connector": connector_name}
     except HTTPException:
         raise
@@ -2002,8 +2002,10 @@ async def test_connector(connector_name: str):
 # =============================================================================
 
 @app.post("/api/healthcare/code-lookup")
-async def code_lookup(code: str, code_type: Optional[str] = None):
+async def code_lookup(payload: Dict[str, Any]):
     """Look up ICD-10, CPT, HCPCS, or CDT code."""
+    code = payload.get("code", "")
+    code_type = payload.get("code_type") or payload.get("codeType")
     registry = _get_skill_registry()
     if registry is None:
         return {"code": code, "description": "Code lookup unavailable", "code_type": code_type}
@@ -2015,8 +2017,15 @@ async def code_lookup(code: str, code_type: Optional[str] = None):
 
 
 @app.post("/api/healthcare/cci-check")
-async def cci_check(code1: str, code2: str, modifier: Optional[str] = None):
+async def cci_check(payload: Dict[str, Any]):
     """Check NCCI edit pair compatibility."""
+    code1 = payload.get("code1")
+    code2 = payload.get("code2")
+    modifier = payload.get("modifier")
+    # Accept a {codes: [code1, code2]} shape as well.
+    codes = payload.get("codes")
+    if isinstance(codes, list) and len(codes) >= 2:
+        code1, code2 = codes[0], codes[1]
     registry = _get_skill_registry()
     if registry is None:
         return {"compatible": True, "modifier_required": False}
@@ -2028,8 +2037,10 @@ async def cci_check(code1: str, code2: str, modifier: Optional[str] = None):
 
 
 @app.post("/api/healthcare/fee-schedule")
-async def fee_schedule_lookup(code: str, locality: Optional[str] = None):
+async def fee_schedule_lookup(payload: Dict[str, Any]):
     """Look up Medicare fee schedule amount."""
+    code = payload.get("code") or payload.get("cptCode") or ""
+    locality = payload.get("locality")
     registry = _get_skill_registry()
     if registry is None:
         return {"code": code, "amount": 0.0, "locality": locality or "national"}
@@ -2041,8 +2052,10 @@ async def fee_schedule_lookup(code: str, locality: Optional[str] = None):
 
 
 @app.post("/api/healthcare/coverage")
-async def coverage_check(code: str, payer: str):
+async def coverage_check(payload: Dict[str, Any]):
     """Check LCD/NCD coverage criteria."""
+    code = payload.get("code") or payload.get("cpt_code") or payload.get("cptCode") or ""
+    payer = payload.get("payer", "")
     registry = _get_skill_registry()
     if registry is None:
         return {"covered": True, "criteria": []}
@@ -2054,8 +2067,10 @@ async def coverage_check(code: str, payer: str):
 
 
 @app.post("/api/healthcare/denial-analyze")
-async def denial_analyze(car_code: str, rarc_code: Optional[str] = None):
+async def denial_analyze(payload: Dict[str, Any]):
     """Analyze denial codes and recommend actions."""
+    car_code = payload.get("car_code") or payload.get("carCode") or ""
+    rarc_code = payload.get("rarc_code") or payload.get("rarcCode")
     registry = _get_skill_registry()
     if registry is None:
         return {"car_code": car_code, "recommendation": "Appeal with documentation"}
@@ -2126,8 +2141,10 @@ async def code_search(data: Dict[str, Any]):
 
 
 @app.post("/api/healthcare/drg-group")
-async def drg_group(diagnoses: List[str], procedures: List[str]):
+async def drg_group(payload: Dict[str, Any]):
     """Determine DRG assignment."""
+    diagnoses = payload.get("diagnoses", [])
+    procedures = payload.get("procedures", [])
     registry = _get_skill_registry()
     if registry is None:
         return {"drg": "470", "description": "Major joint replacement", "weight": 2.12}
@@ -2139,8 +2156,9 @@ async def drg_group(diagnoses: List[str], procedures: List[str]):
 
 
 @app.post("/api/healthcare/drug-lookup")
-async def drug_lookup(drug_name: str):
+async def drug_lookup(payload: Dict[str, Any]):
     """Look up drug information."""
+    drug_name = payload.get("drug_name") or payload.get("drugName") or ""
     registry = _get_skill_registry()
     if registry is None:
         return {"drug_name": drug_name, "info": {}}
@@ -2152,8 +2170,9 @@ async def drug_lookup(drug_name: str):
 
 
 @app.post("/api/healthcare/npi-lookup")
-async def npi_lookup(npi: str):
+async def npi_lookup(payload: Dict[str, Any]):
     """Look up NPI registry information."""
+    npi = payload.get("npi", "")
     registry = _get_connector_registry()
     if registry is None:
         return {"npi": npi, "provider": {}}
@@ -2168,8 +2187,10 @@ async def npi_lookup(npi: str):
 
 
 @app.post("/api/healthcare/edi-parse")
-async def edi_parse(edi_content: str, transaction_type: str):
+async def edi_parse(payload: Dict[str, Any]):
     """Parse X12 EDI transaction."""
+    edi_content = payload.get("edi_content") or payload.get("transaction_set") or ""
+    transaction_type = payload.get("transaction_type") or payload.get("control_number") or ""
     registry = _get_skill_registry()
     if registry is None:
         return {"parsed": True, "data": {}}
@@ -2181,8 +2202,10 @@ async def edi_parse(edi_content: str, transaction_type: str):
 
 
 @app.post("/api/healthcare/risk-adjust")
-async def risk_adjust(diagnoses: List[str], demographics: Dict[str, Any]):
+async def risk_adjust(payload: Dict[str, Any]):
     """Calculate HCC/RAF score."""
+    diagnoses = payload.get("diagnoses", [])
+    demographics = payload.get("demographics", {})
     registry = _get_skill_registry()
     if registry is None:
         return {"raf_score": 1.0, "hccs": []}
@@ -2194,8 +2217,10 @@ async def risk_adjust(diagnoses: List[str], demographics: Dict[str, Any]):
 
 
 @app.post("/api/healthcare/medical-calc")
-async def medical_calculator(calc_type: str, values: Dict[str, float]):
+async def medical_calculator(payload: Dict[str, Any]):
     """Perform clinical calculation."""
+    calc_type = payload.get("calc_type") or payload.get("calcType") or ""
+    values = payload.get("values", {})
     registry = _get_skill_registry()
     if registry is None:
         return {"result": 0.0, "interpretation": "Normal"}

@@ -18,11 +18,13 @@ export default function CoverageChecker() {
     setResult(null);
 
     try {
-      const response = await api.post('/api/healthcare/coverage-check', {
+      const response = await api.post('/api/healthcare/coverage', {
+        code: cptCode.trim(),
         cpt_code: cptCode.trim(),
         diagnosis_code: diagnosisCode.trim(),
+        payer: '',
       });
-      setResult(response);
+      setResult(await response.json());
     } catch (err) {
       setError(err.message || 'Coverage check failed');
     } finally {
