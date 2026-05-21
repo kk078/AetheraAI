@@ -122,6 +122,20 @@ def _get_proactive_intelligence():
     return _proactive_intelligence
 
 
+_knowledge_updater = None
+
+
+def _get_knowledge_updater():
+    global _knowledge_updater
+    if _knowledge_updater is None:
+        try:
+            from proactive.knowledge_updater import get_knowledge_updater
+            _knowledge_updater = get_knowledge_updater()
+        except Exception as e:
+            logger.warning(f"Knowledge updater not available: {e}")
+    return _knowledge_updater
+
+
 def _get_memory_manager():
     global _memory_manager
     if _memory_manager is None:
@@ -2192,6 +2206,87 @@ async def medical_calculator(calc_type: str, values: Dict[str, float]):
         return {"result": 0.0, "interpretation": "Calculator unavailable"}
 
 # =============================================================================
+# KNOWLEDGE / AUTO-UPDATE ENDPOINTS
+# =============================================================================
+
+@app.get("/api/knowledge/updates")
+async def knowledge_updates(
+    days: int = 7,
+    source: Optional[str] = None,
+    category: Optional[str] = None,
+    applied_only: bool = False,
+    limit: int = 100,
+):
+    """Return the changelog of recent CMS/regulatory/security knowledge updates."""
+    updater = _get_knowledge_updater()
+    if updater is None:
+        return {"updates": [], "error": "Knowledge updater unavailable"}
+    try:
+        return {"updates": updater.get_changelog(
+            days=days, source=source, category=category,
+            applied_only=applied_only, limit=limit,
+        )}
+    except Exception as e:
+        return {"updates": [], "error": str(e)}
+
+
+@app.get("/api/knowledge/stats")
+async def knowledge_stats():
+    """Return knowledge-updater statistics (counts by source/category)."""
+    updater = _get_knowledge_updater()
+    if updater is None:
+        return {"error": "Knowledge updater unavailable"}
+    try:
+        return updater.get_stats()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/api/knowledge/check")
+async def knowledge_check(payload: Optional[Dict[str, Any]] = None):
+    """Fetch new updates from CMS/regulatory sources (optionally a subset)."""
+    updater = _get_knowledge_updater()
+    if updater is None:
+        return {"checked": False, "error": "Knowledge updater unavailable"}
+    sources = (payload or {}).get("sources")
+    try:
+        found = updater.check_updates(sources=sources)
+        return {"checked": True, "new_by_source": {k: len(v) for k, v in found.items()}}
+    except Exception as e:
+        return {"checked": False, "error": str(e)}
+
+
+@app.post("/api/knowledge/apply")
+async def knowledge_apply(payload: Optional[Dict[str, Any]] = None):
+    """Mark pending updates as applied so they inform the assistant's answers."""
+    updater = _get_knowledge_updater()
+    if updater is None:
+        return {"applied": 0, "error": "Knowledge updater unavailable"}
+    data = payload or {}
+    try:
+        applied = updater.apply_updates(
+            source=data.get("source"),
+            category=data.get("category"),
+            limit=data.get("limit", 100),
+        )
+        return {"applied": len(applied), "ids": [u.id for u in applied]}
+    except Exception as e:
+        return {"applied": 0, "error": str(e)}
+
+
+@app.post("/api/knowledge/auto-update")
+async def knowledge_auto_update():
+    """Run a full check-and-auto-apply cycle (the scheduled hands-off routine)."""
+    updater = _get_knowledge_updater()
+    if updater is None:
+        return {"error": "Knowledge updater unavailable"}
+    try:
+        return updater.run_auto_update()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# =============================================================================
 # CLOUDFLARE ENDPOINTS
 # =============================================================================
 
@@ -3898,6 +3993,23 @@ IMPORTANT: This conversation contains sensitive personal information.
                 base_prompt += f"\n\n--- Time-Sensitive Items ---\n" + "\n".join(deadline_parts) + "\n--- End Time-Sensitive Items ---\n"
     except Exception:
         pass  # Temporal context is supplementary
+
+    # Inject recent CMS / regulatory updates so healthcare answers reflect current rules
+    if specialist and specialist.startswith("healthcare"):
+        try:
+            updater = _get_knowledge_updater()
+            if updater:
+                industry = updater.get_industry_context(
+                    category="healthcare_regulatory", days=30, limit=8
+                )
+                if industry:
+                    base_prompt += (
+                        "\n\n--- Recent CMS / Regulatory Updates ---\n"
+                        "Account for these recent industry changes when answering:\n"
+                        f"{industry}\n--- End Updates ---\n"
+                    )
+        except Exception:
+            pass  # Industry context is supplementary, never block the chat
 
     return base_prompt
 
