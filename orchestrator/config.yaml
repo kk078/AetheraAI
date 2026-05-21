@@ -463,6 +463,8 @@ specialists:
       - data_visualizer
       - spreadsheet_analyzer
       - calculator
+      - data_insights
+      - structured_extractor
 
   general:
     enabled: true
@@ -475,6 +477,8 @@ specialists:
       - web_researcher
       - summarizer
       - document_creator
+      - structured_extractor
+      - data_insights
 
 # =============================================================================
 # MODEL CONFIGURATION

@@ -751,6 +751,43 @@ TOOL_DEFINITIONS: Dict[str, Dict[str, Any]] = {
             }
         }
     },
+    "structured_extractor": {
+        "type": "function",
+        "function": {
+            "name": "structured_extractor",
+            "description": "Extract structured fields from free text using typed patterns (email, phone, date, ssn, mrn, npi, money, icd10, cpt, zip) or custom regex/keyword.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["extract", "extract_all"]},
+                    "text": {"type": "string"},
+                    "fields": {"type": "array", "items": {"type": "object"}, "description": "Field specs: {name, type|regex, keyword?}"}
+                },
+                "required": ["text", "fields"]
+            }
+        }
+    },
+    "data_insights": {
+        "type": "function",
+        "function": {
+            "name": "data_insights",
+            "description": "Analyze an array of records: describe (stats), group_by (aggregate), or outliers (z-score).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["describe", "group_by", "outliers"]},
+                    "records": {"type": "array", "items": {"type": "object"}},
+                    "fields": {"type": "array", "items": {"type": "string"}},
+                    "group_field": {"type": "string"},
+                    "agg_field": {"type": "string"},
+                    "agg": {"type": "string", "enum": ["sum", "mean", "count", "min", "max"]},
+                    "field": {"type": "string"},
+                    "z_threshold": {"type": "number"}
+                },
+                "required": ["action", "records"]
+            }
+        }
+    },
 }
 
 
