@@ -643,6 +643,44 @@ TOOL_DEFINITIONS: Dict[str, Dict[str, Any]] = {
             }
         }
     },
+    "patient_cost_estimator": {
+        "type": "function",
+        "function": {
+            "name": "patient_cost_estimator",
+            "description": "Estimate patient out-of-pocket cost from benefits (deductible, coinsurance, copay, OOP max) or build a No Surprises Act Good Faith Estimate.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["estimate", "good_faith_estimate"]},
+                    "charge": {"type": "number"},
+                    "allowed_amount": {"type": "number"},
+                    "deductible_remaining": {"type": "number"},
+                    "coinsurance_rate": {"type": "number", "description": "Fraction, e.g. 0.2"},
+                    "copay": {"type": "number"},
+                    "oop_max_remaining": {"type": "number"},
+                    "items": {"type": "array", "items": {"type": "object"}, "description": "GFE line items"}
+                }
+            }
+        }
+    },
+    "timely_filing_calculator": {
+        "type": "function",
+        "function": {
+            "name": "timely_filing_calculator",
+            "description": "Compute claim timely-filing deadlines from date of service and payer; reports days remaining and status (ok/at_risk/expired).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["calculate", "batch"]},
+                    "date_of_service": {"type": "string", "description": "YYYY-MM-DD"},
+                    "payer_class": {"type": "string"},
+                    "filing_limit_days": {"type": "integer"},
+                    "as_of": {"type": "string"},
+                    "claims": {"type": "array", "items": {"type": "object"}}
+                }
+            }
+        }
+    },
 }
 
 

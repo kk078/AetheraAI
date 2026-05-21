@@ -51,6 +51,8 @@ specialists:
       - ar_prioritizer
       - rcm_kpi_calculator
       - underpayment_detector
+      - patient_cost_estimator
+      - timely_filing_calculator
 
   healthcare_payer:
     enabled: true
@@ -85,6 +87,9 @@ specialists:
       - quality_tracker
       - ndc_pricer
       - denial_analyzer
+      - underpayment_detector
+      - patient_cost_estimator
+      - timely_filing_calculator
 
   healthcare_regulatory:
     enabled: true
