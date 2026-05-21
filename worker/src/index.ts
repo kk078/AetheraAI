@@ -9,6 +9,8 @@ import { route } from "./router";
 import { SPECIALISTS, getSpecialist } from "./specialists";
 import { saveMessage, getRecentMessages, deleteUserData } from "./db";
 import { searchMemory, storeMemory, buildMemoryContext } from "./memory";
+import { checkUpdates, getChangelog } from "./knowledge";
+import { generateBriefing, getBriefing } from "./briefing";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -142,4 +144,38 @@ app.post("/api/memory", async (c) => {
   return c.json({ stored });
 });
 
-export default app;
+// --- Proactive: knowledge updates + briefing (also driven by Cron Triggers) ---
+app.get("/api/knowledge/updates", async (c) => {
+  const days = Number(c.req.query("days") ?? 7);
+  return c.json({ updates: await getChangelog(c.env, days, 50) });
+});
+
+app.post("/api/knowledge/check", async (c) => {
+  return c.json(await checkUpdates(c.env));
+});
+
+app.get("/api/briefing", async (c) => {
+  const briefing = (await getBriefing(c.env)) ?? (await generateBriefing(c.env));
+  return c.json(briefing);
+});
+
+app.post("/api/briefing/generate", async (c) => {
+  return c.json(await generateBriefing(c.env));
+});
+
+// Cron Triggers handler (schedules in wrangler.toml):
+//   every 12 hours -> refresh CMS/regulatory updates, then regenerate briefing
+//   daily at 07:00 -> regenerate the morning briefing
+async function scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
+  const run = async () => {
+    if (event.cron === "0 7 * * *") {
+      await generateBriefing(env);
+      return;
+    }
+    await checkUpdates(env);
+    await generateBriefing(env);
+  };
+  ctx.waitUntil(run());
+}
+
+export default { fetch: (req: Request, env: Env, ctx: ExecutionContext) => app.fetch(req, env, ctx), scheduled };

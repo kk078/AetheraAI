@@ -23,6 +23,12 @@ stack. **Phase 1 is a vertical slice**, not feature parity with the Python app.
   memories into the system prompt and stores each turn. No-ops gracefully until
   the Vectorize index is created (see "Enable memory" below). Endpoints:
   `POST /api/memory`, `POST /api/memory/search`.
+- **Proactive scheduler** (`src/knowledge.ts`, `src/briefing.ts`) — **Cron Triggers**
+  drive a `scheduled` handler that refreshes CMS/regulatory updates (data.cms.gov +
+  Federal Register → D1 `knowledge_updates`) and regenerates a morning briefing
+  (cached in KV). Endpoints: `GET /api/knowledge/updates`, `POST /api/knowledge/check`,
+  `GET /api/briefing`, `POST /api/briefing/generate`. A Queue binding is scaffolded
+  (commented) for async tasks.
 - **D1** (`DB`) for conversations/messages, **KV** (`CACHE`, = `aethera-ai-cache`),
   **R2** (`ASSETS_BUCKET`, = `aethera-ai-assets`), **Workers AI** (`AI`).
 - **Auth** (`src/auth.ts`) — bearer-key gate on `/api/*` (`API_AUTH_ENABLED`),
@@ -61,7 +67,8 @@ wrangler vectorize create aethera-ai-memory --dimensions=768 --metric=cosine
   `drug_reference`, `ndc_pricer`, `drg_grouper`, `apc_grouper`, `claim_scrubber`,
   …) — follow the phase-3 pattern: seed the dataset into D1, query it from the
   skill. (`code_lookup` / `fee_schedule` / `denial_analyzer` are done.)
-- **Phase 5:** proactive scheduler → **Cron Triggers + Queues**.
-- Also: sensitivity/PHI routing, plugins/connectors, voice.
+- Sensitivity/PHI routing, plugins/connectors, voice.
+- Optional: enable the async task **Queue** (`wrangler queues create aethera-tasks`,
+  then uncomment the `[[queues.*]]` blocks).
 - Local-only features (local Ollama, Whisper/Piper) don't exist serverless — all
   inference goes to cloud LLM APIs (needs a BAA for PHI).

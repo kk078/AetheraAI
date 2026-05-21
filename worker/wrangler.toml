@@ -28,6 +28,18 @@ binding = "AI"
 # binding = "VECTORIZE"
 # index_name = "aethera-ai-memory"
 
+# Proactive scheduler (phase 5) — Cron Triggers run the `scheduled` handler.
+[triggers]
+crons = ["0 */12 * * *", "0 7 * * *"]
+
+# Optional async task queue. Create it once, then uncomment + redeploy:
+#   wrangler queues create aethera-tasks
+# [[queues.producers]]
+# binding = "TASK_QUEUE"
+# queue = "aethera-tasks"
+# [[queues.consumers]]
+# queue = "aethera-tasks"
+
 [vars]
 # OpenAI-compatible chat-completions base (Ollama Cloud by default).
 LLM_BASE_URL = "https://ollama.com/v1"

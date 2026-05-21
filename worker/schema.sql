@@ -55,3 +55,19 @@ CREATE TABLE IF NOT EXISTS denial_code (
   category        TEXT DEFAULT 'unknown',
   appeal_priority TEXT DEFAULT 'medium'
 );
+
+-- Phase 5: CMS/regulatory updates fetched by Cron Triggers.
+CREATE TABLE IF NOT EXISTS knowledge_updates (
+  id             TEXT PRIMARY KEY,
+  source         TEXT NOT NULL,
+  source_key     TEXT NOT NULL,
+  title          TEXT NOT NULL,
+  summary        TEXT DEFAULT '',
+  url            TEXT DEFAULT '',
+  category       TEXT DEFAULT 'healthcare_regulatory',
+  published_date TEXT DEFAULT '',
+  fetched_at     TEXT NOT NULL DEFAULT (datetime('now')),
+  applied        INTEGER DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ku_source_key ON knowledge_updates(source, source_key);
+CREATE INDEX IF NOT EXISTS idx_ku_fetched ON knowledge_updates(fetched_at);
