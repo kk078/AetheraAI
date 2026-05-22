@@ -21,12 +21,10 @@ bucket_name = "aethera-ai-assets"
 [ai]
 binding = "AI"
 
-# Memory/RAG vector index (phase 4). Create it ONCE, then uncomment + redeploy:
-#   wrangler vectorize create aethera-ai-memory --dimensions=768 --metric=cosine
-# Until then, memory features no-op gracefully (chat still works).
-# [[vectorize]]
-# binding = "VECTORIZE"
-# index_name = "aethera-ai-memory"
+# Memory/RAG vector index (phase 4). Index created: aethera-ai-memory (768/cosine).
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "aethera-ai-memory"
 
 # Proactive scheduler (phase 5) — Cron Triggers run the `scheduled` handler.
 [triggers]
