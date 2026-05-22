@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import type { Env, ChatMessage } from "./types";
-import { requestAuthorized } from "./auth";
+import { authorizeRequest } from "./auth";
 import { makeLLMClient } from "./llm";
 import { runAgentLoop } from "./agent";
 import { REGISTRY } from "./skills";
@@ -24,11 +24,18 @@ const app = new Hono<{ Bindings: Env }>();
 
 app.use("*", cors());
 
-// Auth gate (off unless API_AUTH_ENABLED). Cloudflare Access is the real login.
+// Auth gate (off unless API_AUTH_ENABLED). Cloudflare Access is the real login:
+// a valid Cf-Access-Jwt-Assertion authorizes the request; a bearer key works as
+// a fallback for API clients.
 app.use("*", async (c, next) => {
-  if (!requestAuthorized(c.env, c.req.path, c.req.method, c.req.header("authorization") ?? null)) {
-    return c.json({ detail: "Unauthorized" }, 401);
-  }
+  const ok = await authorizeRequest(
+    c.env,
+    c.req.path,
+    c.req.method,
+    c.req.header("authorization") ?? null,
+    c.req.header("cf-access-jwt-assertion") ?? null,
+  );
+  if (!ok) return c.json({ detail: "Unauthorized" }, 401);
   await next();
 });
 

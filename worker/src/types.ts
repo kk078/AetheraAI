@@ -22,6 +22,10 @@ export interface Env {
   LLM_BASE_URL: string;
   DEFAULT_MODEL: string;
   API_AUTH_ENABLED: string;
+  // Cloudflare Access (primary login). When set, a valid Cf-Access-Jwt-Assertion
+  // header authorizes /api/* without an API key.
+  ACCESS_TEAM_DOMAIN?: string;
+  ACCESS_AUD?: string;
   // secrets
   OLLAMA_API_KEY?: string;
   API_KEYS?: string;
