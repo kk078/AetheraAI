@@ -1334,6 +1334,176 @@ export const eligibilityChecker: Skill = {
   },
 };
 
+// ==========================================================================
+// Batch C (pure-logic): medical_calculator, lab_interpreter, claim_scrubber
+// ==========================================================================
+
+export const medicalCalculator: Skill = {
+  name: "medical_calculator",
+  description:
+    "Clinical calculators: bmi, bsa, creatinine_clearance (Cockcroft-Gault), egfr (MDRD), map, anion_gap, corrected_calcium.",
+  parameters: {
+    type: "object",
+    properties: {
+      calculator: { type: "string", enum: ["bmi", "bsa", "creatinine_clearance", "egfr", "map", "anion_gap", "corrected_calcium"] },
+      params: { type: "object", description: "Calculator inputs (see each calculator)" },
+    },
+    required: ["calculator", "params"],
+  },
+  execute(a) {
+    const calc = String(a.calculator ?? a.calc_type ?? "").toLowerCase();
+    const p = a.params ?? {};
+    const num = (v: any) => Number(v);
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    try {
+      switch (calc) {
+        case "bmi": {
+          const w = num(p.weight_kg), h = num(p.height_cm) / 100;
+          if (!(w > 0) || !(h > 0)) return { success: false, error: "weight_kg and height_cm are required" };
+          const bmi = w / (h * h);
+          const category = bmi < 18.5 ? "Underweight" : bmi < 25 ? "Normal weight" : bmi < 30 ? "Overweight" : "Obese";
+          return { success: true, data: { calculator: "bmi", bmi: r2(bmi), category } };
+        }
+        case "bsa": {
+          const w = num(p.weight_kg), h = num(p.height_cm);
+          if (!(w > 0) || !(h > 0)) return { success: false, error: "weight_kg and height_cm are required" };
+          return { success: true, data: { calculator: "bsa", bsa_m2: r2(Math.sqrt((h * w) / 3600)), formula: "Mosteller" } };
+        }
+        case "creatinine_clearance": {
+          const age = num(p.age), w = num(p.weight_kg), scr = num(p.creatinine_mg_dl);
+          if (!(age > 0) || !(w > 0) || !(scr > 0)) return { success: false, error: "age, weight_kg, creatinine_mg_dl are required" };
+          let crcl = ((140 - age) * w) / (72 * scr);
+          if (String(p.sex).toLowerCase().startsWith("f")) crcl *= 0.85;
+          return { success: true, data: { calculator: "creatinine_clearance", crcl_ml_min: r2(crcl), formula: "Cockcroft-Gault" } };
+        }
+        case "egfr": {
+          const scr = num(p.creatinine_mg_dl), age = num(p.age);
+          if (!(scr > 0) || !(age > 0)) return { success: false, error: "creatinine_mg_dl and age are required" };
+          let egfr = 175 * Math.pow(scr, -1.154) * Math.pow(age, -0.203);
+          if (String(p.sex).toLowerCase().startsWith("f")) egfr *= 0.742;
+          const stage = egfr >= 90 ? "G1" : egfr >= 60 ? "G2" : egfr >= 45 ? "G3a" : egfr >= 30 ? "G3b" : egfr >= 15 ? "G4" : "G5";
+          return { success: true, data: { calculator: "egfr", egfr_ml_min_1_73m2: r2(egfr), ckd_stage: stage, formula: "MDRD" } };
+        }
+        case "map": {
+          const sys = num(p.systolic), dia = num(p.diastolic);
+          if (!(sys > 0) || !(dia > 0)) return { success: false, error: "systolic and diastolic are required" };
+          return { success: true, data: { calculator: "map", map_mmhg: r2((sys + 2 * dia) / 3) } };
+        }
+        case "anion_gap": {
+          const na = num(p.sodium), cl = num(p.chloride), hco3 = num(p.bicarbonate);
+          const ag = na - (cl + hco3);
+          return { success: true, data: { calculator: "anion_gap", anion_gap: r2(ag), interpretation: ag > 12 ? "High anion gap" : "Normal" } };
+        }
+        case "corrected_calcium": {
+          const ca = num(p.calcium), alb = num(p.albumin);
+          return { success: true, data: { calculator: "corrected_calcium", corrected_calcium_mg_dl: r2(ca + 0.8 * (4.0 - alb)) } };
+        }
+        default:
+          return { success: false, error: `Unknown calculator: ${calc}` };
+      }
+    } catch (e: any) {
+      return { success: false, error: String(e?.message ?? e) };
+    }
+  },
+};
+
+interface LabRange { low: number; high: number; unit: string; critical_low?: number; critical_high?: number; }
+const LAB_TESTS: Record<string, LabRange> = {
+  sodium: { low: 135, high: 145, unit: "mmol/L", critical_low: 120, critical_high: 160 },
+  potassium: { low: 3.5, high: 5.0, unit: "mmol/L", critical_low: 2.5, critical_high: 6.5 },
+  glucose: { low: 70, high: 99, unit: "mg/dL", critical_low: 40, critical_high: 500 },
+  creatinine: { low: 0.6, high: 1.3, unit: "mg/dL", critical_high: 10 },
+  hemoglobin: { low: 12, high: 16, unit: "g/dL", critical_low: 7, critical_high: 20 },
+  wbc: { low: 4.5, high: 11, unit: "10^9/L", critical_low: 2, critical_high: 30 },
+  platelets: { low: 150, high: 400, unit: "10^9/L", critical_low: 20, critical_high: 1000 },
+  a1c: { low: 4.0, high: 5.6, unit: "%" },
+};
+
+export const labInterpreter: Skill = {
+  name: "lab_interpreter",
+  description: "Interpret lab values vs reference ranges (flagging critical values) and analyze trends.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["interpret", "compare_to_range", "trend_analysis"] },
+      test_name: { type: "string" }, value: { type: "number" }, values: { type: "array", items: { type: "number" } },
+    },
+    required: ["action", "test_name"],
+  },
+  execute(a) {
+    const name = String(a.test_name ?? "").toLowerCase().trim();
+    const ref = LAB_TESTS[name];
+    if (!ref) return { success: false, error: `No reference range for '${a.test_name}'` };
+    const classify = (v: number) => {
+      let status = v < ref.low ? "low" : v > ref.high ? "high" : "normal";
+      let critical = false;
+      if (ref.critical_low != null && v <= ref.critical_low) { status = "critical_low"; critical = true; }
+      if (ref.critical_high != null && v >= ref.critical_high) { status = "critical_high"; critical = true; }
+      return { status, critical };
+    };
+    if (a.action === "trend_analysis") {
+      const vals: number[] = (a.values ?? []).map(Number).filter((n: number) => isFinite(n));
+      if (vals.length < 2) return { success: false, error: "Provide at least two values for trend_analysis" };
+      const delta = vals[vals.length - 1] - vals[0];
+      const trend = Math.abs(delta) < (ref.high - ref.low) * 0.1 ? "stable" : delta > 0 ? "increasing" : "decreasing";
+      return { success: true, data: { test_name: name, unit: ref.unit, values: vals, trend, change: Math.round(delta * 100) / 100, latest: classify(vals[vals.length - 1]) } };
+    }
+    const v = Number(a.value);
+    if (!isFinite(v)) return { success: false, error: "'value' is required" };
+    const c = classify(v);
+    return { success: true, data: { test_name: name, value: v, unit: ref.unit, reference_range: { low: ref.low, high: ref.high }, status: c.status, critical: c.critical } };
+  },
+};
+
+const MUE_LIMITS: Record<string, number> = {
+  "99213": 1, "99214": 1, "99215": 1, "36415": 1, "80053": 1, "85025": 1, "93000": 1,
+  "97110": 4, "97140": 4, "20610": 2, "71046": 1, "72148": 1,
+};
+const ICD10_RE = /^[A-TV-Z]\d{2}(\.\d{1,4})?$/i;
+const CPT_RE = /^\d{5}$/;
+const HCPCS_RE = /^[A-Z]\d{4}$/i;
+
+export const claimScrubber: Skill = {
+  name: "claim_scrubber",
+  description:
+    "Pre-submission claim validation: ICD-10/CPT format, MUE unit limits, and duplicate codes. Returns a risk score and issue list.",
+  parameters: {
+    type: "object",
+    properties: {
+      diagnosis_codes: { type: "array", items: { type: "string" } },
+      procedure_codes: { type: "array", items: { type: "string" } },
+      units: { type: "array", items: { type: "number" } },
+    },
+  },
+  execute(a) {
+    const dx: string[] = a.diagnosis_codes ?? [];
+    const px: string[] = a.procedure_codes ?? [];
+    const units: number[] = a.units ?? [];
+    if (!dx.length && !px.length) return { success: false, error: "diagnosis_codes and/or procedure_codes are required" };
+    const issues: { severity: string; type: string; code?: string; message: string }[] = [];
+
+    for (const d of dx) {
+      if (!ICD10_RE.test(String(d).trim())) issues.push({ severity: "high", type: "icd10_format", code: d, message: `Invalid ICD-10 format: ${d}` });
+    }
+    px.forEach((c, i) => {
+      const code = String(c).trim();
+      if (!CPT_RE.test(code) && !HCPCS_RE.test(code)) {
+        issues.push({ severity: "high", type: "cpt_format", code, message: `Invalid CPT/HCPCS format: ${code}` });
+      }
+      const u = Number(units[i] ?? 1);
+      const mue = MUE_LIMITS[code];
+      if (mue != null && u > mue) issues.push({ severity: "medium", type: "mue", code, message: `Units (${u}) exceed MUE limit (${mue}) for ${code}` });
+    });
+    const dupPx = px.filter((c, i) => px.indexOf(c) !== i);
+    for (const c of [...new Set(dupPx)]) issues.push({ severity: "medium", type: "duplicate", code: c, message: `Duplicate procedure code: ${c}` });
+    if (!dx.length) issues.push({ severity: "high", type: "missing_dx", message: "No diagnosis code linked to the claim" });
+
+    const score = Math.min(100, issues.reduce((s, i) => s + (i.severity === "high" ? 30 : i.severity === "medium" ? 15 : 5), 0));
+    const level = score >= 60 ? "high" : score >= 25 ? "medium" : score > 0 ? "low" : "clean";
+    return { success: true, data: { issues, issue_count: issues.length, risk_score: score, risk_level: level, clean: issues.length === 0 } };
+  },
+};
+
 export const REGISTRY: Record<string, Skill> = {
   [rcmKpiCalculator.name]: rcmKpiCalculator,
   [emLevelAdvisor.name]: emLevelAdvisor,
@@ -1356,6 +1526,9 @@ export const REGISTRY: Record<string, Skill> = {
   [ndcPricer.name]: ndcPricer,
   [riskAdjuster.name]: riskAdjuster,
   [eligibilityChecker.name]: eligibilityChecker,
+  [medicalCalculator.name]: medicalCalculator,
+  [labInterpreter.name]: labInterpreter,
+  [claimScrubber.name]: claimScrubber,
 };
 
 export function toolDefinitions(names: string[]) {
