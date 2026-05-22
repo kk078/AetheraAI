@@ -48,7 +48,11 @@ API_AUTH_ENABLED = "true"
 #   OLLAMA_API_KEY   (Bearer token for LLM_BASE_URL)
 #   API_KEYS         (comma-separated bearer keys accepted on /api/*)
 
-# Custom domain is bound via the dashboard or a [[routes]] block once DNS exists:
-# [[routes]]
-# pattern = "ai.aetherahealthcare.com/api/*"
-# zone_name = "aetherahealthcare.com"
+# Same-origin topology: the React UI is served by Cloudflare Pages at
+# ai.aetherahealthcare.com and calls /api/* on the same host (VITE_API_URL in
+# the Pages build). This route makes the Worker handle /api/* on that hostname,
+# so Pages serves the SPA and the Worker serves the API with no CORS hop. The
+# route requires the aetherahealthcare.com zone + ai DNS record to exist.
+[[routes]]
+pattern = "ai.aetherahealthcare.com/api/*"
+zone_name = "aetherahealthcare.com"

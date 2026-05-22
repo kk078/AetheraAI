@@ -37,9 +37,21 @@ workflow manually) — `.github/workflows/deploy-cloudflare.yml` deploys the
 Worker and the Pages UI.
 
 ## C. Custom domain + login
-1. **Domain:** in the Workers dashboard for `aethera-ai`, add a **Custom Domain**
-   `ai.aetherahealthcare.com` (or uncomment the `[[routes]]` block in
-   `wrangler.toml` and redeploy). Cloudflare creates the DNS + cert.
+1. **Domain (same-origin):** the React UI (Pages) is served at
+   `ai.aetherahealthcare.com` and calls `/api/*` on the same host, so the Worker
+   must own `/api/*` on that hostname. This is done with the **path-scoped route**
+   already enabled in `wrangler.toml`:
+   ```toml
+   [[routes]]
+   pattern = "ai.aetherahealthcare.com/api/*"
+   zone_name = "aetherahealthcare.com"
+   ```
+   `wrangler deploy` binds the route; Pages serves the SPA at the root and the
+   Worker takes precedence for `/api/*` (no CORS hop). **Do not** add a Worker
+   *Custom Domain* for the whole hostname — that would take the entire host and
+   conflict with the Pages custom domain. The route requires the
+   `aetherahealthcare.com` zone and the `ai` DNS record (the Pages custom domain
+   creates the proxied record) to exist first.
 2. **Login (Cloudflare Access):** Zero Trust → Access → Applications → Add
    (Self-hosted), domain `ai.aetherahealthcare.com`, policy Allow → Include →
    Emails = your address (template: `infrastructure/cloudflare/access_policy.json`).
