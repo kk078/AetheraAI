@@ -35,10 +35,7 @@ const navSections = [
     title: 'Extensions',
     items: [
       { icon: 'skills', label: 'Skills', view: 'skills' },
-      { icon: 'plugins', label: 'Plugins', view: 'plugins' },
-      { icon: 'connectors', label: 'Connectors', view: 'connectors' },
       { icon: 'automations', label: 'Automations', view: 'automations' },
-      { icon: 'pc', label: 'PC Control', view: 'pc-control' },
     ],
   },
   {

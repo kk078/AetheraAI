@@ -1,14 +1,15 @@
 name: Deploy to Cloudflare
 
+# The Worker now serves BOTH the API (/api/*) and the static React UI
+# (Workers Static Assets, from ui/dist), so a single deploy ships the whole app
+# to ai.aetherahealthcare.com behind one Cloudflare Access login.
+#
 # Triggers:
-#   - Manual "Run workflow" button (after this file lands on the default branch),
-#     with a choice of what to deploy (default: worker only).
-#   - Push to main -> deploy Worker + Pages.
-#   - Push to the active feature branch -> deploy Worker ONLY (Pages stays on main),
-#     so you can test the serverless API before merging.
+#   - Manual "Run workflow" button.
+#   - Push to main or the active feature branch (paths: worker/**, ui/**, this file).
 #
 # Required repo secrets (Settings > Secrets and variables > Actions):
-#   CLOUDFLARE_API_TOKEN  (Workers Scripts edit, D1 edit, Pages edit, Account read)
+#   CLOUDFLARE_API_TOKEN  (Workers Scripts edit, D1 edit, Account read)
 #   CLOUDFLARE_ACCOUNT_ID
 # Worker runtime secrets (OLLAMA_API_KEY, API_KEYS) are set once in the Cloudflare
 # dashboard (Workers & Pages > aethera-ai > Settings > Variables and Secrets) or
@@ -16,12 +17,6 @@ name: Deploy to Cloudflare
 
 on:
   workflow_dispatch:
-    inputs:
-      deploy_target:
-        description: "What to deploy"
-        type: choice
-        options: [worker, pages, both]
-        default: worker
   push:
     branches: [main, "claude/add-claude-documentation-AXi7P"]
     paths:
@@ -30,46 +25,15 @@ on:
       - ".github/workflows/deploy-cloudflare.yml"
 
 jobs:
-  worker:
-    if: >-
-      github.event_name == 'push' ||
-      github.event.inputs.deploy_target == 'worker' ||
-      github.event.inputs.deploy_target == 'both'
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-      - name: Install
-        working-directory: worker
-        run: npm install
-      # Verify the TypeScript port before shipping — fails the run on errors.
-      - name: Typecheck
-        working-directory: worker
-        run: npm run typecheck
-      - name: Test
-        working-directory: worker
-        run: npm test
-      - name: Deploy Worker
-        working-directory: worker
-        run: npx wrangler deploy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          node-version: 22
 
-  pages:
-    # Pages deploys only from main, or when explicitly selected in a manual run.
-    if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      github.event.inputs.deploy_target == 'pages' ||
-      github.event.inputs.deploy_target == 'both'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
+      # Build the React UI; the Worker serves it as static assets.
       - name: Build UI
         working-directory: ui
         run: |
@@ -78,9 +42,24 @@ jobs:
         env:
           VITE_API_URL: https://ai.aetherahealthcare.com
           VITE_WS_URL: wss://ai.aetherahealthcare.com/api/voice/stream
-      - name: Deploy to Cloudflare Pages
-        working-directory: ui
-        run: npx wrangler pages deploy dist --project-name=aethera-ai
+
+      - name: Install worker deps
+        working-directory: worker
+        run: npm install
+
+      # Verify the TypeScript port before shipping — fails the run on errors.
+      - name: Typecheck
+        working-directory: worker
+        run: npm run typecheck
+
+      - name: Test
+        working-directory: worker
+        run: npm test
+
+      # Deploys the Worker + the UI (ui/dist) as static assets in one step.
+      - name: Deploy Worker
+        working-directory: worker
+        run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

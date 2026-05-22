@@ -40,10 +40,7 @@ const VIEW_LABELS = {
   'coverage-checker': 'Coverage Checker',
   'edi-viewer': 'EDI Viewer',
   skills: 'Skill Browser',
-  plugins: 'Plugin Manager',
-  connectors: 'Connectors',
   automations: 'Automation Builder',
-  'pc-control': 'PC Control',
   conversations: 'Conversations',
   settings: 'Settings',
 };

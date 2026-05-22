@@ -4,8 +4,28 @@ A Cloudflare-native rewrite of the orchestrator, replacing the Python/Docker
 stack. **Phase 1 is a vertical slice**, not feature parity with the Python app.
 
 ## What's here
-- **Hono** API on Workers: `/api/health`, `/api/chat`, `/api/skills`,
-  `/api/skills/:name/execute`, `/api/compliance/user-data/:userId`.
+- **Hono** API on Workers covering the React UI's surface:
+  - Core: `/api/health`, `/api/skills`, `/api/skills/:name/execute`, `/api/specialists`,
+    `/api/specialists/:name/query`.
+  - Chat: `/api/chat`, `/api/chat/stream` (SSE), `/api/chat/specialist/:name`,
+    `/api/chat/multi-agent`.
+  - Conversations (D1): `GET/DELETE /api/conversations[/:id]`.
+  - Healthcare tools (adapters over skills, see `src/healthcare.ts`):
+    `POST /api/healthcare/{code-lookup,code-search,denial-analyze,denial-predict,
+    appeal-generate,fee-schedule,npi-lookup,claim-analysis,cci-check,coverage,
+    drg-group,drug-lookup,risk-adjust,medical-calc,edi-parse}`; plus
+    `GET /api/codes/:codeType/:code`.
+  - Memory: `POST/GET /api/memory/search`, `POST /api/memory`,
+    `GET/POST /api/memory/profile/:userId`.
+  - Compliance: `GET /api/audit`, `GET /api/audit/stats`, `POST /api/audit/export`,
+    `DELETE /api/compliance/user-data/:userId`.
+  - Proactive: `/api/knowledge/updates`, `/api/knowledge/check`, `/api/briefing`,
+    `/api/briefing/generate`, `/api/news`, `/api/dashboard`.
+  - Settings/models: `GET/POST /api/settings`, `GET /api/models`.
+  - **Host-only / not-yet-ported** namespaces (voice, clipboard, upload, backup,
+    cloudflare tunnel, plugins, connectors, temporal, alerts, queue, automations,
+    and the heavier memory subsystems) return an explicit `501 {portable:false}`
+    so the UI degrades gracefully instead of hitting an undefined route.
 - **Agent loop** (`src/agent.ts`) — TS port of `orchestrator/agent.py`: the model
   calls tools, we execute them, feed results back, iterate.
 - **Router + specialists** (`src/router.ts`, `src/specialists.ts`) — config-driven
@@ -50,10 +70,15 @@ npm run typecheck             # tsc --noEmit
 npm run db:init               # apply schema.sql to D1
 npx wrangler secret put OLLAMA_API_KEY
 npx wrangler secret put API_KEYS
+cd ../ui && npm run build     # build the UI; the Worker serves ui/dist as assets
+cd ../worker
 npm run dev                   # local
-npm run deploy                # wrangler deploy
+npm run deploy                # wrangler deploy (ships Worker + ui/dist)
 ```
-CI deploys both Worker and Pages via `.github/workflows/deploy-cloudflare.yml`.
+The Worker serves both the API (`/api/*`) and the static React UI (Workers
+Static Assets from `../ui/dist`, SPA fallback to `index.html`), so one deploy
+ships the whole app. CI builds the UI then deploys the Worker via
+`.github/workflows/deploy-cloudflare.yml`.
 
 ## Enable memory (one-time)
 ```bash
@@ -63,8 +88,10 @@ wrangler vectorize create aethera-ai-memory --dimensions=768 --metric=cosine
 ```
 
 ## Skill port — complete
-All healthcare skills from the Python app are ported (22 + the general/RCM
-enhancement skills = 33 total in `REGISTRY`). Data-backed skills query D1
+All healthcare skills from the Python app are ported (38 total in `REGISTRY`,
+including general/RCM enhancement skills and the `coverage_checker`,
+`denial_predictor`, `edi_parser`, `calculator` tools). Every tool advertised by
+a specialist resolves to a registered skill. Data-backed skills query D1
 (code_set, fee_rvu/gpci, denial_code, cci_edit, ms_drg/drg_dx, apc/cpt_apc, drug*,
 ndc, hcc/hcc_dx, benefit_plan); the rest are pure-logic.
 

@@ -21,6 +21,17 @@ bucket_name = "aethera-ai-assets"
 [ai]
 binding = "AI"
 
+# Static assets: the built React UI (../ui/dist) is served by this Worker, so the
+# entire app lives at ai.aetherahealthcare.com behind a single Cloudflare Access
+# login. `/api/*` runs the Worker (Hono); every other path is served from the SPA
+# build, with index.html returned for unmatched client-side routes. The UI must
+# be built (cd ../ui && npm run build) before `wrangler deploy`.
+[assets]
+directory = "../ui/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
 # Memory/RAG vector index (phase 4). Index created: aethera-ai-memory (768/cosine).
 [[vectorize]]
 binding = "VECTORIZE"
@@ -43,12 +54,16 @@ crons = ["0 */12 * * *", "0 7 * * *"]
 LLM_BASE_URL = "https://ollama.com/v1"
 DEFAULT_MODEL = "gpt-oss:120b-cloud"
 API_AUTH_ENABLED = "true"
+# Cloudflare Access (primary login). A valid Cf-Access-Jwt-Assertion header
+# authorizes /api/* without an API key; the bearer key remains a fallback.
+ACCESS_TEAM_DOMAIN = "aetheraonline.cloudflareaccess.com"
+ACCESS_AUD = "8719a614a2aecd72bef4d3d063a95f8999e9345297f5f13982400cb74f69da56"
 
 # Secrets — set with: wrangler secret put <NAME>
 #   OLLAMA_API_KEY   (Bearer token for LLM_BASE_URL)
 #   API_KEYS         (comma-separated bearer keys accepted on /api/*)
 
-# Custom domain is bound via the dashboard or a [[routes]] block once DNS exists:
-# [[routes]]
-# pattern = "ai.aetherahealthcare.com/api/*"
-# zone_name = "aetherahealthcare.com"
+# Domain: ai.aetherahealthcare.com is bound to this Worker as a Custom Domain
+# (DNS record type "Worker"), so the whole hostname is served here — the static
+# UI (via [assets]) and the API (/api/*). No [[routes]] block is needed; do NOT
+# also add a Pages custom domain on this hostname.

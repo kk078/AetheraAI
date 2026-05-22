@@ -1,7 +1,7 @@
 // Specialist definitions (ported/condensed from orchestrator/config.yaml).
-// `tools` may reference skills not yet ported to the Worker — the agent loop
-// only advertises the ones present in the skill REGISTRY, so unported tools are
-// simply inert until added.
+// Every tool listed here resolves to a skill in the REGISTRY; the agent loop
+// only advertises tools present in the registry, so the lists are kept in sync
+// with what is actually callable.
 
 export interface SpecialistConfig {
   name: string;
@@ -62,7 +62,7 @@ export const SPECIALISTS: SpecialistConfig[] = [
     description: "Clinical decision support, labs, medications, guidelines",
     priority: 2,
     keywords: ["lab", "medication", "drug", "clinical", "guideline", "screening", "diagnosis", "symptom", "e/m", "mdm"],
-    tools: ["drug_reference", "lab_interpreter", "medical_calculator", "code_lookup", "screening_guidelines",
+    tools: ["drug_reference", "lab_interpreter", "medical_calculator", "code_lookup",
       "em_level_advisor", "medical_necessity_builder"],
     system_prompt:
       "You are Aethera's clinical specialist. Provide clinical decision support with appropriate caution; " +
@@ -75,7 +75,7 @@ export const SPECIALISTS: SpecialistConfig[] = [
     priority: 2,
     keywords: ["analytics", "kpi", "metric", "dashboard", "trend", "risk stratification", "report", "days in ar"],
     tools: ["rcm_kpi_calculator", "ar_prioritizer", "hcc_gap_finder", "risk_adjuster", "quality_tracker",
-      "data_insights", "data_visualizer", "spreadsheet_analyzer"],
+      "data_insights"],
     system_prompt:
       "You are Aethera's healthcare analytics specialist. Compute KPIs and surface trends; show the numbers.",
   },
@@ -85,7 +85,7 @@ export const SPECIALISTS: SpecialistConfig[] = [
     description: "Financial analysis, accounting, budgeting",
     priority: 3,
     keywords: ["finance", "budget", "accounting", "revenue", "expense", "forecast", "cash flow", "profit"],
-    tools: ["calculator", "data_insights", "spreadsheet_analyzer"],
+    tools: ["calculator", "data_insights"],
     system_prompt: "You are Aethera's finance specialist. Provide clear, quantified financial analysis.",
   },
   {
@@ -94,7 +94,7 @@ export const SPECIALISTS: SpecialistConfig[] = [
     description: "Coding, architecture, debugging",
     priority: 3,
     keywords: ["code", "bug", "function", "api", "deploy", "refactor", "test", "typescript", "python", "worker"],
-    tools: ["code_executor", "structured_extractor"],
+    tools: ["calculator", "structured_extractor"],
     system_prompt: "You are Aethera's software engineering specialist. Be precise and pragmatic.",
   },
   {
@@ -103,7 +103,7 @@ export const SPECIALISTS: SpecialistConfig[] = [
     description: "Literature, summarization, synthesis",
     priority: 3,
     keywords: ["research", "study", "paper", "summarize", "literature", "evidence", "pubmed"],
-    tools: ["web_researcher", "summarizer", "document_creator", "structured_extractor", "data_insights"],
+    tools: ["structured_extractor", "data_insights"],
     system_prompt: "You are Aethera's research specialist. Synthesize sources and cite them.",
   },
   {
@@ -112,7 +112,7 @@ export const SPECIALISTS: SpecialistConfig[] = [
     description: "Tasks, scheduling, reminders, general help",
     priority: 4,
     keywords: ["remind", "schedule", "task", "calendar", "email", "todo", "note"],
-    tools: ["calculator", "web_researcher", "summarizer"],
+    tools: ["calculator", "structured_extractor"],
     system_prompt: "You are Aethera, a helpful personal assistant.",
   },
   {

@@ -22,7 +22,7 @@ export default function ChatInterface() {
     clearMessages,
   } = useChat();
 
-  const [specialist, setSpecialist] = useState('general');
+  const [specialist, setSpecialist] = useState('auto');
   const [model, setModel] = useState(DEFAULT_MODEL);
   const [availableModels, setAvailableModels] = useState([]);
   const [showFileUpload, setShowFileUpload] = useState(false);
@@ -104,6 +104,7 @@ export default function ChatInterface() {
             onChange={(e) => setSpecialist(e.target.value)}
             className="bg-aethera-background border border-aethera-border rounded-lg px-2 py-1 text-sm text-aethera-foreground focus:outline-none focus:border-aethera-primary"
           >
+            <option value="auto">Auto (route)</option>
             {Object.entries(SPECIALIST_NAMES).map(([key, label]) => (
               <option key={key} value={key}>{label}</option>
             ))}

@@ -33,6 +33,7 @@ Thumbs.db
 ui/dist/
 ui/node_modules/
 ui/.vite/
+worker/node_modules/
 
 # Logs
 *.log

@@ -1,4 +1,5 @@
 import type { Env } from "./types";
+import { verifyAccessJwt } from "./access";
 
 const PUBLIC_PATHS = new Set(["/api/health"]);
 
@@ -26,16 +27,30 @@ function extractBearer(header: string | null): string | null {
   return m ? m[1].trim() : null;
 }
 
+/** Bearer-key check (defense-in-depth / API clients). */
+export function bearerAuthorized(env: Env, authHeader: string | null): boolean {
+  const token = extractBearer(authHeader);
+  if (!token) return false;
+  return allowedKeys(env).some((k) => constantTimeEquals(token, k));
+}
+
 /**
  * Authentication gate for /api/* (off unless API_AUTH_ENABLED). Cloudflare
- * Access is the primary login at the edge; this is defense-in-depth.
+ * Access is the primary login: a valid `Cf-Access-Jwt-Assertion` header (signed
+ * by the team's JWKS) authorizes the request, so the browser needs no key. A
+ * valid bearer key is accepted as a fallback for API clients / curl.
  */
-export function requestAuthorized(env: Env, path: string, method: string, authHeader: string | null): boolean {
+export async function authorizeRequest(
+  env: Env,
+  path: string,
+  method: string,
+  authHeader: string | null,
+  accessJwt: string | null,
+): Promise<boolean> {
   if (!authEnabled(env)) return true;
   if (method.toUpperCase() === "OPTIONS") return true;
   if (!path.startsWith("/api/")) return true;
   if (PUBLIC_PATHS.has(path)) return true;
-  const token = extractBearer(authHeader);
-  if (!token) return false;
-  return allowedKeys(env).some((k) => constantTimeEquals(token, k));
+  if (await verifyAccessJwt(env, accessJwt)) return true;
+  return bearerAuthorized(env, authHeader);
 }

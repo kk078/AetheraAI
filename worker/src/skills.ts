@@ -1965,6 +1965,85 @@ export const npiLookup: Skill = {
   },
 };
 
+// ==========================================================================
+// Audit fixes: skills the router advertised but were missing (pure-logic)
+// ==========================================================================
+
+const COVERAGE: Record<string, { policy: string; covered: boolean; criteria: string[]; prior_auth: boolean }> = {
+  "70553": { policy: "NCD/LCD - MRI Brain", covered: true, criteria: ["Documented neurological indication", "Prior workup completed as appropriate"], prior_auth: true },
+  "72148": { policy: "LCD - MRI Lumbar Spine", covered: true, criteria: ["Radiculopathy or red-flag symptoms", "6 weeks conservative therapy unless red flags"], prior_auth: true },
+  "97110": { policy: "Therapy Services", covered: true, criteria: ["Documented plan of care", "Medical necessity documented"], prior_auth: false },
+  "27447": { policy: "LCD - Total Knee Arthroplasty", covered: true, criteria: ["Radiographic OA", "Failed conservative management"], prior_auth: true },
+};
+export const coverageChecker: Skill = {
+  name: "coverage_checker",
+  description: "Check LCD/NCD coverage criteria and prior-auth need for a CPT (sample policy set).",
+  parameters: { type: "object", properties: { action: { type: "string" }, cpt: { type: "string" }, code: { type: "string" }, payer: { type: "string" }, diagnosis: { type: "string" } } },
+  execute(a) {
+    const cpt = String(a.cpt ?? a.code ?? "").trim();
+    if (!cpt) return { success: false, error: "cpt is required" };
+    const c = COVERAGE[cpt];
+    if (!c) return { success: true, data: { cpt, covered: null, note: "No local coverage policy on file; verify LCD/NCD with the MAC." } };
+    return { success: true, data: { cpt, payer: a.payer ?? null, ...c } };
+  },
+};
+
+export const denialPredictor: Skill = {
+  name: "denial_predictor",
+  description: "Predict denial risk for a claim before submission from common risk factors.",
+  parameters: { type: "object", properties: { claim_data: { type: "object" } } },
+  execute(a) {
+    const c = a.claim_data ?? a ?? {};
+    const risks: string[] = [];
+    let score = 0;
+    const dx = c.diagnosis_codes;
+    if (!dx || (Array.isArray(dx) && dx.length === 0)) { risks.push("Missing diagnosis linkage"); score += 30; }
+    if (c.requires_prior_auth && !c.prior_auth) { risks.push("Prior auth required but not on file"); score += 35; }
+    if (c.timely_filing_days != null && Number(c.timely_filing_days) > 90) { risks.push("Approaching/over timely filing limit"); score += 20; }
+    if (c.modifier_missing) { risks.push("Likely missing modifier"); score += 15; }
+    if (c.eligibility_verified === false) { risks.push("Eligibility not verified"); score += 10; }
+    score = Math.min(100, score);
+    return { success: true, data: { denial_probability: Math.round(score) / 100, risk_score: score, risk_level: score >= 60 ? "high" : score >= 30 ? "medium" : "low", risk_factors: risks } };
+  },
+};
+
+const EDI_TYPES: Record<string, string> = {
+  "837": "Claim", "835": "Remittance Advice", "270": "Eligibility Inquiry", "271": "Eligibility Response",
+  "276": "Claim Status Inquiry", "277": "Claim Status Response", "278": "Prior Authorization", "834": "Enrollment",
+};
+export const ediParser: Skill = {
+  name: "edi_parser",
+  description: "Parse an X12 EDI transaction (837/835/270/271/276/277/278/834) into segments and identify the transaction type.",
+  parameters: { type: "object", properties: { content: { type: "string" }, edi_content: { type: "string" } } },
+  execute(a) {
+    const text = String(a.content ?? a.edi_content ?? "");
+    if (!text) return { success: false, error: "content is required" };
+    const segs = text.split("~").map((s) => s.trim()).filter(Boolean);
+    const parsed = segs.map((s) => { const el = s.split("*"); return { id: el[0], elements: el.slice(1) }; });
+    const st = parsed.find((p) => p.id === "ST");
+    const ttype = st ? st.elements[0] : null;
+    return { success: true, data: { transaction_type: ttype, transaction_name: ttype ? (EDI_TYPES[ttype] ?? "Unknown") : null, segment_count: parsed.length, segments: parsed.slice(0, 50) } };
+  },
+};
+
+export const calculator: Skill = {
+  name: "calculator",
+  description: "Evaluate a basic arithmetic expression (+ - * / % and parentheses).",
+  parameters: { type: "object", properties: { expression: { type: "string" } }, required: ["expression"] },
+  execute(a) {
+    const expr = String(a.expression ?? "").trim();
+    if (!expr || !/^[\d\s+\-*/%.()]+$/.test(expr)) return { success: false, error: "Only numbers and + - * / % ( ) are allowed" };
+    try {
+      // eslint-disable-next-line no-new-func -- input is regex-restricted to digits/operators
+      const val = Function(`"use strict"; return (${expr});`)();
+      if (typeof val !== "number" || !isFinite(val)) return { success: false, error: "Invalid expression" };
+      return { success: true, data: { expression: expr, result: val } };
+    } catch {
+      return { success: false, error: "Could not evaluate expression" };
+    }
+  },
+};
+
 export const REGISTRY: Record<string, Skill> = {
   [rcmKpiCalculator.name]: rcmKpiCalculator,
   [emLevelAdvisor.name]: emLevelAdvisor,
@@ -2000,6 +2079,10 @@ export const REGISTRY: Record<string, Skill> = {
   [complianceChecker.name]: complianceChecker,
   [credentialingTracker.name]: credentialingTracker,
   [npiLookup.name]: npiLookup,
+  [coverageChecker.name]: coverageChecker,
+  [denialPredictor.name]: denialPredictor,
+  [ediParser.name]: ediParser,
+  [calculator.name]: calculator,
 };
 
 export function toolDefinitions(names: string[]) {
