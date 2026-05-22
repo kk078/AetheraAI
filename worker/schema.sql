@@ -128,3 +128,16 @@ CREATE TABLE IF NOT EXISTS benefit_plan (
   plan_type TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT DEFAULT '',
   cost_sharing TEXT DEFAULT '{}', coverage_limits TEXT DEFAULT '{}', covered_services TEXT DEFAULT '[]'
 );
+
+-- Compliance: append-only HIPAA audit trail (PHI redacted before write).
+CREATE TABLE IF NOT EXISTS audit_log (
+  id TEXT PRIMARY KEY, ts TEXT NOT NULL DEFAULT (datetime('now')), user_id TEXT DEFAULT '',
+  action TEXT NOT NULL, resource TEXT DEFAULT '', details TEXT DEFAULT '',
+  ip_address TEXT DEFAULT '', sensitivity TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
+CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
+CREATE TRIGGER IF NOT EXISTS prevent_audit_update BEFORE UPDATE ON audit_log
+  BEGIN SELECT RAISE(ABORT, 'audit_log is append-only: UPDATE not permitted'); END;
+CREATE TRIGGER IF NOT EXISTS prevent_audit_delete BEFORE DELETE ON audit_log
+  BEGIN SELECT RAISE(ABORT, 'audit_log is append-only: DELETE not permitted'); END;

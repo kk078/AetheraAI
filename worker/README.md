@@ -68,9 +68,21 @@ enhancement skills = 33 total in `REGISTRY`). Data-backed skills query D1
 (code_set, fee_rvu/gpci, denial_code, cci_edit, ms_drg/drg_dx, apc/cpt_apc, drug*,
 ndc, hcc/hcc_dx, benefit_plan); the rest are pure-logic.
 
-## Not yet ported (roadmap)
-- Sensitivity/PHI routing layer; plugins/connectors; voice. (Local-only Python
-  features — local Ollama, Whisper/Piper — have no serverless equivalent.)
+## Compliance
+- **PHI/PII** (`src/sensitivity.ts`): `/api/chat` scans input, adds a
+  confidentiality directive to the prompt on PHI, and returns a sensitivity flag.
+- **Audit** (`src/audit.ts`): append-only `audit_log` in D1 (UPDATE/DELETE
+  blocked by triggers); PHI is redacted before write. `GET /api/audit`.
+
+## Connectors
+- `npi_lookup` queries the live NPPES public API via `fetch`. Other read-only
+  connectors (OpenFDA, PubMed, RxNorm) follow the same pattern.
+
+## Not portable to serverless
+- **Voice** (Whisper STT / Piper TTS) needs local model runtime — no Workers
+  equivalent; use an external speech API if needed.
+- "Force PHI to a local model" — there is no local model on Workers; PHI
+  detection + audit + the confidentiality directive are the portable controls.
 - Sensitivity/PHI routing, plugins/connectors, voice.
 - Optional: enable the async task **Queue** (`wrangler queues create aethera-tasks`,
   then uncomment the `[[queues.*]]` blocks).

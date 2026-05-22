@@ -11,6 +11,8 @@ import { saveMessage, getRecentMessages, deleteUserData } from "./db";
 import { searchMemory, storeMemory, buildMemoryContext } from "./memory";
 import { checkUpdates, getChangelog } from "./knowledge";
 import { generateBriefing, getBriefing } from "./briefing";
+import { analyzeSensitivity } from "./sensitivity";
+import { logAudit, queryAudit } from "./audit";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -65,6 +67,9 @@ app.post("/api/chat", async (c) => {
   const conversationId: string = body.conversation_id ?? crypto.randomUUID();
   const model: string = body.model ?? c.env.DEFAULT_MODEL;
 
+  // PHI/PII scan of the input (detection + audit; no local model to route to).
+  const sensitivity = analyzeSensitivity(message);
+
   // Route to a specialist (or honor a forced one), then use its system prompt
   // and tool set for the agent loop.
   const routing = route(message, body.specialist);
@@ -72,6 +77,11 @@ app.post("/api/chat", async (c) => {
 
   // Semantic recall of relevant past memories (no-op until Vectorize is bound).
   let systemPrompt = specialist.system_prompt;
+  if (sensitivity.contains_phi) {
+    systemPrompt +=
+      "\n\nIMPORTANT: This conversation may contain PHI. Maintain strict confidentiality, " +
+      "do not repeat identifiers unnecessarily, and follow HIPAA minimum-necessary principles.";
+  }
   try {
     const memCtx = buildMemoryContext(await searchMemory(c.env, message, userId, 5));
     if (memCtx) systemPrompt += memCtx;
@@ -113,11 +123,20 @@ app.post("/api/chat", async (c) => {
     storePromise.catch(() => {});
   }
 
+  // Append-only audit entry (metadata only; PHI redacted on write).
+  const auditPromise = logAudit(c.env, {
+    user_id: userId, action: "chat", resource: conversationId,
+    details: `specialist=${routing.primary_specialist}; model=${model}; tools=${result.tools_used.join(",")}`,
+    ip: c.req.header("cf-connecting-ip") ?? "", sensitivity: sensitivity.level,
+  });
+  try { c.executionCtx.waitUntil(auditPromise); } catch { auditPromise.catch(() => {}); }
+
   return c.json({
     conversation_id: conversationId,
     specialist: routing.primary_specialist,
     confidence: routing.confidence,
     reasoning: routing.reasoning,
+    sensitivity: { level: sensitivity.level, contains_phi: sensitivity.contains_phi },
     message: { role: "assistant", content: result.content },
     tools_used: result.tools_used,
     iterations: result.iterations,
@@ -125,9 +144,17 @@ app.post("/api/chat", async (c) => {
   });
 });
 
+app.get("/api/audit", async (c) => {
+  const limit = Number(c.req.query("limit") ?? 100);
+  const user_id = c.req.query("user_id") ?? undefined;
+  return c.json({ entries: await queryAudit(c.env, { user_id, limit }) });
+});
+
 app.delete("/api/compliance/user-data/:userId", async (c) => {
-  const removed = await deleteUserData(c.env, c.req.param("userId"));
-  return c.json({ user_id: c.req.param("userId"), conversations_deleted: removed });
+  const userId = c.req.param("userId");
+  const removed = await deleteUserData(c.env, userId);
+  await logAudit(c.env, { user_id: userId, action: "delete_user_data", resource: userId, details: `conversations_deleted=${removed}`, sensitivity: "phi" });
+  return c.json({ user_id: userId, conversations_deleted: removed });
 });
 
 app.post("/api/memory/search", async (c) => {

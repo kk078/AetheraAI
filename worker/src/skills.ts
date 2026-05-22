@@ -1923,6 +1923,48 @@ export const credentialingTracker: Skill = {
   },
 };
 
+// --------------------------------------------------------------------------
+// Connector: NPI lookup (live NPPES public API via fetch)
+// --------------------------------------------------------------------------
+export const npiLookup: Skill = {
+  name: "npi_lookup",
+  description: "Look up a provider/organization in the NPPES NPI Registry (live CMS public API).",
+  parameters: {
+    type: "object",
+    properties: { npi: { type: "string", description: "10-digit NPI" } },
+    required: ["npi"],
+  },
+  async execute(a) {
+    const npi = String(a.npi ?? "").trim();
+    if (!/^\d{10}$/.test(npi)) return { success: false, error: "npi must be a 10-digit number" };
+    try {
+      const res = await fetch(`https://npiregistry.cms.hhs.gov/api/?version=2.1&number=${npi}`, {
+        headers: { "User-Agent": "AetheraAI-Worker/1.0" },
+      });
+      if (!res.ok) return { success: false, error: `NPI registry error (${res.status})` };
+      const data: any = await res.json();
+      if (!data?.result_count) return { success: true, data: { npi, found: false } };
+      const r = data.results[0];
+      const b = r.basic ?? {};
+      const addr = (r.addresses ?? [])[0] ?? {};
+      const tax = (r.taxonomies ?? []).find((t: any) => t.primary) ?? (r.taxonomies ?? [])[0] ?? {};
+      return {
+        success: true,
+        data: {
+          npi, found: true,
+          name: b.organization_name || `${b.first_name ?? ""} ${b.last_name ?? ""}`.trim(),
+          enumeration_type: r.enumeration_type,
+          status: b.status,
+          taxonomy: tax.desc,
+          city: addr.city, state: addr.state,
+        },
+      };
+    } catch (e: any) {
+      return { success: false, error: String(e?.message ?? e) };
+    }
+  },
+};
+
 export const REGISTRY: Record<string, Skill> = {
   [rcmKpiCalculator.name]: rcmKpiCalculator,
   [emLevelAdvisor.name]: emLevelAdvisor,
@@ -1957,6 +1999,7 @@ export const REGISTRY: Record<string, Skill> = {
   [qualityTracker.name]: qualityTracker,
   [complianceChecker.name]: complianceChecker,
   [credentialingTracker.name]: credentialingTracker,
+  [npiLookup.name]: npiLookup,
 };
 
 export function toolDefinitions(names: string[]) {

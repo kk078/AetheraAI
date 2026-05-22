@@ -4,7 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Aethera AI is a self-hosted personal AI "super agent" specialized in US healthcare (provider + payer) with broader multi-industry coverage. It is a multi-service stack: a FastAPI orchestrator (the brain), a React PWA frontend, a LiteLLM proxy fronting a model cascade (Ollama Cloud → HuggingFace → Ollama Local), and supporting services (ChromaDB, Redis, SearXNG, voice). The whole system is designed to run locally via Docker Compose with optional Cloudflare tunnel for remote access. Windows is the primary host target (`setup.ps1`, `.ps1` installers for host agent and clipboard agent).
+Aethera AI is a personal AI "super agent" specialized in US healthcare (provider + payer) with broader multi-industry coverage.
+
+**Two implementations live in this repo. The Cloudflare Worker (`worker/`) is now the primary, deployed platform; the Python/Docker stack is the original reference.**
+
+- **`worker/` — Cloudflare-native (primary).** A Hono/TypeScript Worker that is the deployed production system: agent loop + router/specialists + 30+ ported skills, backed by **D1** (conversations, audit, and all reference datasets), **KV** (cache), **R2** (assets), **Vectorize** + **Workers AI** (memory/RAG), and **Cron Triggers** (proactive scheduler). PHI detection/redaction + an append-only audit trail are built in. Auth is a bearer-key gate behind **Cloudflare Access**; the React UI deploys to **Cloudflare Pages**. Deploy is automated via `.github/workflows/deploy-cloudflare.yml` (push to `main`). See `worker/README.md` and `worker/DEPLOY.md`. No Docker, no local PC.
+- **Python/Docker stack (reference).** The original multi-service system: a FastAPI orchestrator (the brain), a React PWA frontend, a LiteLLM proxy fronting a model cascade (Ollama Cloud → HuggingFace → Ollama Local), and supporting services (ChromaDB, Redis, SearXNG, voice). Runs via Docker Compose with optional Cloudflare tunnel; Windows is the host target (`setup.ps1`). It remains useful for features that can't run serverless — notably **local model inference and local voice (Whisper/Piper)**.
+
+The sections below describe the **Python/Docker** architecture (still the fullest implementation). For Worker-specific guidance see `worker/`.
 
 ## Common commands
 
@@ -74,7 +81,7 @@ Request flow: **UI → `POST /api/chat` (orchestrator) → router → sensitivit
 - **`voice/`**, **`clipboard/`**: STT/TTS and clipboard monitoring for healthcare codes; these run on the host (Windows installers `.ps1`).
 - **`host_agent/`**: privileged host-side agent for PC control, with a `safety.py` guard layer.
 - **`ui/`**: React 18 + Vite + Tailwind + Zustand PWA. SPA served via nginx in Docker (`ui/nginx.conf`).
-- **`worker/`**: in-progress **Cloudflare-native rewrite** (phase 1 vertical slice) — a Hono/TypeScript Worker port of the orchestrator (agent loop + a few ported skills) backed by D1/KV/R2, deployed via `.github/workflows/deploy-cloudflare.yml`. The Python stack remains the source of truth until parity; do not assume the Worker is complete.
+- **`worker/`**: the **Cloudflare-native implementation (primary, deployed)** — a Hono/TypeScript Worker port: agent loop, router/specialists, 30+ skills (data-backed ones query D1; pure-logic inline), memory/RAG (Vectorize + Workers AI), proactive scheduler (Cron Triggers), and PHI redaction + append-only audit. Deployed via `.github/workflows/deploy-cloudflare.yml` on push to `main`. See `worker/README.md` / `worker/DEPLOY.md`. The Python stack is retained for local-only features (local model inference, Whisper/Piper voice) with no serverless equivalent.
 
 ## Conventions & gotchas
 
