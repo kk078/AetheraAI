@@ -339,11 +339,52 @@ app.post("/api/memory/profile/:userId", async (c) => {
   return c.json({ user_id: userId, profile: next });
 });
 
+// Profile alias without an explicit userId (UI default).
+app.get("/api/memory/profile", async (c) => {
+  let profile: Record<string, any> = {};
+  try {
+    const raw = await c.env.CACHE.get("memory:profile:default_user");
+    if (raw) profile = JSON.parse(raw);
+  } catch {
+    /* default empty profile */
+  }
+  return c.json({ user_id: "default_user", profile });
+});
+
+app.post("/api/memory/profile", async (c) => {
+  const updates = await c.req.json().catch(() => ({}));
+  let current: Record<string, any> = {};
+  try {
+    const raw = await c.env.CACHE.get("memory:profile:default_user");
+    if (raw) current = JSON.parse(raw);
+  } catch {
+    /* start fresh */
+  }
+  const next = { ...current, ...updates };
+  try {
+    await c.env.CACHE.put("memory:profile:default_user", JSON.stringify(next));
+  } catch {
+    /* best-effort */
+  }
+  return c.json({ user_id: "default_user", profile: next });
+});
+
 // --- Settings (KV) ---
 app.get("/api/settings", async (c) => c.json(await getSettings(c.env)));
 app.post("/api/settings", async (c) => {
   const updates = await c.req.json().catch(() => ({}));
   return c.json(await updateSettings(c.env, updates));
+});
+
+// Privacy settings (subset of app settings) + audit-log view used by the UI.
+app.get("/api/settings/privacy", async (c) => c.json({ settings: await getSettings(c.env) }));
+app.post("/api/settings/privacy", async (c) => {
+  const updates = await c.req.json().catch(() => ({}));
+  return c.json({ settings: await updateSettings(c.env, updates) });
+});
+app.get("/api/settings/privacy/audit-log", async (c) => {
+  const limit = Number(c.req.query("limit") ?? 100);
+  return c.json({ entries: await queryAudit(c.env, { limit }) });
 });
 
 // --- Dashboard ---
