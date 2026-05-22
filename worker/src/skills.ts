@@ -1104,6 +1104,92 @@ export const apcGrouper: Skill = {
   },
 };
 
+// --------------------------------------------------------------------------
+// Drug reference (drug + interactions + formulary in D1)
+// --------------------------------------------------------------------------
+export const drugReference: Skill = {
+  name: "drug_reference",
+  description: "Drug information, drug-drug interaction checks, and formulary tier lookup (data in D1).",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["lookup", "check_interactions", "formulary_info"] },
+      drug_name: { type: "string" }, drug_list: { type: "array", items: { type: "string" } }, payer: { type: "string" },
+    },
+    required: ["action"],
+  },
+  async execute(a, ctx) {
+    const db = ctx?.env?.DB;
+    if (!db) return noDb();
+    try {
+      if (a.action === "lookup") {
+        const name = String(a.drug_name ?? "").toLowerCase().trim();
+        if (!name) return { success: false, error: "drug_name is required" };
+        const d = await db.prepare("SELECT * FROM drug WHERE name = ?1").bind(name).first<any>();
+        if (!d) return { success: true, data: { drug_name: name, found: false, message: "Not in local drug database." } };
+        return { success: true, data: { ...d, generic_available: !!d.generic_available } };
+      }
+      if (a.action === "formulary_info") {
+        const name = String(a.drug_name ?? "").toLowerCase().trim();
+        const payer = String(a.payer ?? "").trim();
+        if (!name || !payer) return { success: false, error: "drug_name and payer are required" };
+        const f = await db.prepare("SELECT tier FROM drug_formulary WHERE drug = ?1 AND payer = ?2").bind(name, payer).first<any>();
+        return { success: true, data: { drug_name: name, payer, tier: f ? f.tier : null, on_formulary: !!f } };
+      }
+      const list: string[] = (a.drug_list ?? []).map((x: string) => String(x).toLowerCase().trim()).filter(Boolean);
+      if (list.length < 2) return { success: false, error: "Provide at least two drugs in drug_list" };
+      const found: any[] = [];
+      for (let i = 0; i < list.length; i++) {
+        for (let j = i + 1; j < list.length; j++) {
+          const [x, y] = [list[i], list[j]].sort();
+          const r = await db.prepare("SELECT drug_a, drug_b, severity, note FROM drug_interaction WHERE drug_a = ?1 AND drug_b = ?2").bind(x, y).first<any>();
+          if (r) found.push(r);
+        }
+      }
+      return { success: true, data: { drugs: list, interactions: found, total: found.length, major_count: found.filter((f) => f.severity === "major").length } };
+    } catch (e: any) {
+      return { success: false, error: String(e?.message ?? e) };
+    }
+  },
+};
+
+// --------------------------------------------------------------------------
+// NDC pricer (drug pricing in D1)
+// --------------------------------------------------------------------------
+export const ndcPricer: Skill = {
+  name: "ndc_pricer",
+  description: "Drug pricing by NDC (ASP/AWP/WAC/NADAC), benchmark comparison, and cost calculation. Data in D1.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["lookup", "compare_benchmarks", "calculate"] },
+      ndc: { type: "string" }, units: { type: "number" }, benchmark: { type: "string", enum: ["asp", "awp", "wac", "nadac"] },
+    },
+    required: ["action", "ndc"],
+  },
+  async execute(a, ctx) {
+    const db = ctx?.env?.DB;
+    if (!db) return noDb();
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    try {
+      const ndc = String(a.ndc ?? "").trim();
+      if (!ndc) return { success: false, error: "ndc is required" };
+      const d = await db.prepare("SELECT * FROM ndc WHERE ndc = ?1").bind(ndc).first<any>();
+      if (!d) return { success: false, error: `NDC ${ndc} not found` };
+      if (a.action === "lookup") return { success: true, data: d };
+      if (a.action === "compare_benchmarks") {
+        return { success: true, data: { ndc, drug_name: d.drug_name, strength: d.strength, prices: { asp: d.asp, awp: d.awp, wac: d.wac, nadac: d.nadac }, awp_to_wac_spread: r2(d.awp - d.wac), asp_to_nadac_spread: r2(d.asp - d.nadac) } };
+      }
+      const units = Number(a.units ?? d.units_per_package ?? 1) || 1;
+      const bm = String(a.benchmark ?? "asp").toLowerCase();
+      const unitPrice = Number((d as any)[bm] ?? d.asp) || 0;
+      return { success: true, data: { ndc, drug_name: d.drug_name, benchmark: bm, unit_price: unitPrice, units, total_cost: r2(unitPrice * units) } };
+    } catch (e: any) {
+      return { success: false, error: String(e?.message ?? e) };
+    }
+  },
+};
+
 export const REGISTRY: Record<string, Skill> = {
   [rcmKpiCalculator.name]: rcmKpiCalculator,
   [emLevelAdvisor.name]: emLevelAdvisor,
@@ -1122,6 +1208,8 @@ export const REGISTRY: Record<string, Skill> = {
   [cciEditor.name]: cciEditor,
   [drgGrouper.name]: drgGrouper,
   [apcGrouper.name]: apcGrouper,
+  [drugReference.name]: drugReference,
+  [ndcPricer.name]: ndcPricer,
 };
 
 export function toolDefinitions(names: string[]) {

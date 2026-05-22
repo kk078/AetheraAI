@@ -96,3 +96,22 @@ CREATE TABLE IF NOT EXISTS apc (
 CREATE TABLE IF NOT EXISTS cpt_apc (
   cpt TEXT PRIMARY KEY, apc TEXT NOT NULL, description TEXT DEFAULT ''
 );
+
+-- Phase 6 batch B (pharmacy): drug reference, interactions, formulary, NDC pricing.
+CREATE TABLE IF NOT EXISTS drug (
+  name TEXT PRIMARY KEY, drug_class TEXT DEFAULT '', indication TEXT DEFAULT '',
+  route TEXT DEFAULT '', common_dosage TEXT DEFAULT '', black_box_warning TEXT DEFAULT '',
+  generic_available INTEGER DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS drug_interaction (
+  drug_a TEXT NOT NULL, drug_b TEXT NOT NULL, severity TEXT NOT NULL, note TEXT DEFAULT ''
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_di_pair ON drug_interaction(drug_a, drug_b);
+CREATE TABLE IF NOT EXISTS drug_formulary (
+  drug TEXT NOT NULL, payer TEXT NOT NULL, tier INTEGER NOT NULL, PRIMARY KEY (drug, payer)
+);
+CREATE TABLE IF NOT EXISTS ndc (
+  ndc TEXT PRIMARY KEY, drug_name TEXT NOT NULL, strength TEXT DEFAULT '', dosage_form TEXT DEFAULT '',
+  manufacturer TEXT DEFAULT '', hcpcs TEXT DEFAULT '', therapy_class TEXT DEFAULT '',
+  asp REAL DEFAULT 0, awp REAL DEFAULT 0, wac REAL DEFAULT 0, nadac REAL DEFAULT 0, units_per_package INTEGER DEFAULT 1
+);
