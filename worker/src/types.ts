@@ -2,6 +2,9 @@ export interface Env {
   DB: D1Database;
   CACHE: KVNamespace;
   ASSETS_BUCKET: R2Bucket;
+  // Static assets binding for the built React UI (see [assets] in wrangler.toml).
+  // Optional so the Worker still runs in tests without an assets directory.
+  ASSETS?: Fetcher;
   // Optional bindings for memory/RAG (phase 4). Typed structurally so the build
   // doesn't depend on a specific @cloudflare/workers-types Vectorize version,
   // and so the Worker still runs when these aren't bound yet.

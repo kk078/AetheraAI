@@ -21,6 +21,17 @@ bucket_name = "aethera-ai-assets"
 [ai]
 binding = "AI"
 
+# Static assets: the built React UI (../ui/dist) is served by this Worker, so the
+# entire app lives at ai.aetherahealthcare.com behind a single Cloudflare Access
+# login. `/api/*` runs the Worker (Hono); every other path is served from the SPA
+# build, with index.html returned for unmatched client-side routes. The UI must
+# be built (cd ../ui && npm run build) before `wrangler deploy`.
+[assets]
+directory = "../ui/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
 # Memory/RAG vector index (phase 4). Index created: aethera-ai-memory (768/cosine).
 [[vectorize]]
 binding = "VECTORIZE"
@@ -48,11 +59,7 @@ API_AUTH_ENABLED = "true"
 #   OLLAMA_API_KEY   (Bearer token for LLM_BASE_URL)
 #   API_KEYS         (comma-separated bearer keys accepted on /api/*)
 
-# Same-origin topology: the React UI is served by Cloudflare Pages at
-# ai.aetherahealthcare.com and calls /api/* on the same host (VITE_API_URL in
-# the Pages build). This route makes the Worker handle /api/* on that hostname,
-# so Pages serves the SPA and the Worker serves the API with no CORS hop. The
-# route requires the aetherahealthcare.com zone + ai DNS record to exist.
-[[routes]]
-pattern = "ai.aetherahealthcare.com/api/*"
-zone_name = "aetherahealthcare.com"
+# Domain: ai.aetherahealthcare.com is bound to this Worker as a Custom Domain
+# (DNS record type "Worker"), so the whole hostname is served here — the static
+# UI (via [assets]) and the API (/api/*). No [[routes]] block is needed; do NOT
+# also add a Pages custom domain on this hostname.

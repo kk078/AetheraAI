@@ -12,9 +12,17 @@ Account: `2c268625d9e6e4c084ff296fcdf5f3bd`. Bindings are already wired in
 `wrangler.toml` (D1 `aethera-ai-db`, KV `aethera-ai-cache`, R2 `aethera-ai-assets`).
 The D1 schema is already applied — no `db:init` needed.
 
+The Worker serves **both** the API (`/api/*`) and the static React UI (Workers
+Static Assets from `ui/dist`), so one deploy ships the whole app to
+`ai.aetherahealthcare.com`. Build the UI before deploying.
+
 ## A. Deploy from your machine
 ```bash
-cd worker
+# 1. Build the UI (the Worker serves ui/dist as static assets)
+cd ui
+VITE_API_URL=https://ai.aetherahealthcare.com npm install && npm run build
+
+cd ../worker
 npm install
 npx wrangler login                      # browser auth (or export CLOUDFLARE_API_TOKEN)
 
@@ -23,7 +31,7 @@ npx wrangler secret put OLLAMA_API_KEY  # your Ollama Cloud key
 npx wrangler secret put API_KEYS        # a long random string; the UI/clients send it as a Bearer token
 
 npm run typecheck && npm test           # verify before shipping
-npx wrangler deploy
+npx wrangler deploy                     # ships the Worker + ui/dist together
 ```
 
 `API_AUTH_ENABLED=true`, so every `/api/*` route except `/api/health` requires
@@ -33,39 +41,25 @@ npx wrangler deploy
 Add repo secrets (Settings → Secrets and variables → Actions):
 `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`. Set the Worker runtime secrets
 once with `wrangler secret put` (above). Then merge to `main` (or run the
-workflow manually) — `.github/workflows/deploy-cloudflare.yml` deploys the
-Worker and the Pages UI.
+workflow manually) — `.github/workflows/deploy-cloudflare.yml` builds the UI and
+deploys the Worker (API + static UI) in one job.
 
 ## C. Custom domain + login
-1. **Domain (same-origin):** the React UI (Pages) is served at
-   `ai.aetherahealthcare.com` and calls `/api/*` on the same host, so the Worker
-   must own `/api/*` on that hostname. This is done with the **path-scoped route**
-   already enabled in `wrangler.toml`:
-   ```toml
-   [[routes]]
-   pattern = "ai.aetherahealthcare.com/api/*"
-   zone_name = "aetherahealthcare.com"
-   ```
-   `wrangler deploy` binds the route; Pages serves the SPA at the root and the
-   Worker takes precedence for `/api/*` (no CORS hop). **Do not** add a Worker
-   *Custom Domain* for the whole hostname — that would take the entire host and
-   conflict with the Pages custom domain. The route requires the
-   `aetherahealthcare.com` zone and the `ai` DNS record (the Pages custom domain
-   creates the proxied record) to exist first.
+1. **Domain (single origin):** `ai.aetherahealthcare.com` is bound to the Worker
+   as a **Custom Domain** (DNS record type `Worker` → `aethera-ai`, proxied), so
+   the whole hostname is served by the Worker — the static UI (via `[assets]`)
+   and the API (`/api/*`). Nothing to add in `wrangler.toml`. **Do not** also add
+   a Pages custom domain on this hostname — the Worker custom domain owns it.
 2. **Login (Cloudflare Access):** Zero Trust → Access → Applications → Add
    (Self-hosted), domain `ai.aetherahealthcare.com`, policy Allow → Include →
    Emails = your address (template: `infrastructure/cloudflare/access_policy.json`).
-   Now nobody reaches the API without an email one-time-passcode login.
+   One login now covers the UI and the API.
 
-## D. Frontend (Cloudflare Pages)
-Build the UI pointed at the Worker and deploy:
-```bash
-cd ../ui
-VITE_API_URL=https://ai.aetherahealthcare.com \
-VITE_WS_URL=wss://ai.aetherahealthcare.com/api/voice/stream \
-npm install && npm run build
-npx wrangler pages deploy dist --project-name=aethera-ai
-```
+## D. Frontend
+The UI is **served by the Worker** as static assets (`[assets]` in
+`wrangler.toml` → `../ui/dist`), so there is no separate Pages deploy. Client
+routes fall back to `index.html`; `/api/*` runs the Worker. Rebuild the UI
+(`cd ../ui && npm run build`) before `wrangler deploy` to ship UI changes.
 
 ## E. Smoke test
 ```bash

@@ -70,10 +70,15 @@ npm run typecheck             # tsc --noEmit
 npm run db:init               # apply schema.sql to D1
 npx wrangler secret put OLLAMA_API_KEY
 npx wrangler secret put API_KEYS
+cd ../ui && npm run build     # build the UI; the Worker serves ui/dist as assets
+cd ../worker
 npm run dev                   # local
-npm run deploy                # wrangler deploy
+npm run deploy                # wrangler deploy (ships Worker + ui/dist)
 ```
-CI deploys both Worker and Pages via `.github/workflows/deploy-cloudflare.yml`.
+The Worker serves both the API (`/api/*`) and the static React UI (Workers
+Static Assets from `../ui/dist`, SPA fallback to `index.html`), so one deploy
+ships the whole app. CI builds the UI then deploys the Worker via
+`.github/workflows/deploy-cloudflare.yml`.
 
 ## Enable memory (one-time)
 ```bash
