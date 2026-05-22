@@ -63,10 +63,11 @@ wrangler vectorize create aethera-ai-memory --dimensions=768 --metric=cosine
 ```
 
 ## Not yet ported (roadmap)
-- **More data-backed skills** (`cci_editor`, `eligibility_checker`,
-  `drug_reference`, `ndc_pricer`, `drg_grouper`, `apc_grouper`, `claim_scrubber`,
-  …) — follow the phase-3 pattern: seed the dataset into D1, query it from the
-  skill. (`code_lookup` / `fee_schedule` / `denial_analyzer` are done.)
+- **More data-backed skills** (`eligibility_checker`, `drug_reference`,
+  `ndc_pricer`, `risk_adjuster`, `claim_scrubber`, `remittance_parser`, …) —
+  follow the phase-3 pattern: seed the dataset into D1, query it from the skill.
+  Done so far: `code_lookup`, `fee_schedule`, `denial_analyzer`, `cci_editor`,
+  `drg_grouper`, `apc_grouper`.
 - Sensitivity/PHI routing, plugins/connectors, voice.
 - Optional: enable the async task **Queue** (`wrangler queues create aethera-tasks`,
   then uncomment the `[[queues.*]]` blocks).

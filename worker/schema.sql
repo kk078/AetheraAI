@@ -71,3 +71,28 @@ CREATE TABLE IF NOT EXISTS knowledge_updates (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ku_source_key ON knowledge_updates(source, source_key);
 CREATE INDEX IF NOT EXISTS idx_ku_fetched ON knowledge_updates(fetched_at);
+
+-- Phase 6 batch A: NCCI edits, MS-DRGs, APCs.
+CREATE TABLE IF NOT EXISTS cci_edit (
+  col1 TEXT NOT NULL, col2 TEXT NOT NULL,
+  modifier_indicator INTEGER NOT NULL, rationale TEXT DEFAULT ''
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cci_pair ON cci_edit(col1, col2);
+CREATE INDEX IF NOT EXISTS idx_cci_col1 ON cci_edit(col1);
+CREATE INDEX IF NOT EXISTS idx_cci_col2 ON cci_edit(col2);
+
+CREATE TABLE IF NOT EXISTS ms_drg (
+  drg TEXT PRIMARY KEY, description TEXT NOT NULL, weight REAL NOT NULL,
+  gmlos REAL DEFAULT 0, type TEXT DEFAULT 'MEDICAL', severity TEXT DEFAULT 'none'
+);
+CREATE TABLE IF NOT EXISTS drg_dx (
+  dx TEXT PRIMARY KEY, base_drg TEXT NOT NULL, description TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS apc (
+  apc TEXT PRIMARY KEY, description TEXT NOT NULL, status_indicator TEXT DEFAULT 'S',
+  payment_rate REAL NOT NULL, weight REAL DEFAULT 0, device_intensive INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS cpt_apc (
+  cpt TEXT PRIMARY KEY, apc TEXT NOT NULL, description TEXT DEFAULT ''
+);

@@ -939,6 +939,171 @@ export const denialAnalyzer: Skill = {
   },
 };
 
+// --------------------------------------------------------------------------
+// CCI editor (NCCI edits in D1)
+// --------------------------------------------------------------------------
+export const cciEditor: Skill = {
+  name: "cci_editor",
+  description:
+    "Check NCCI edit pairs (data in D1): whether two codes are billable together, whether a modifier can override, and list edits for a code.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["check_pair", "check_with_modifier", "list_edits"] },
+      code1: { type: "string" }, code2: { type: "string" }, modifier: { type: "string" }, code: { type: "string" },
+    },
+    required: ["action"],
+  },
+  async execute(a, ctx) {
+    const db = ctx?.env?.DB;
+    if (!db) return noDb();
+    try {
+      if (a.action === "list_edits") {
+        const code = String(a.code ?? "").trim();
+        if (!code) return { success: false, error: "'code' is required" };
+        const res = await db.prepare("SELECT col1, col2, modifier_indicator, rationale FROM cci_edit WHERE col1 = ?1 OR col2 = ?1").bind(code).all<any>();
+        return { success: true, data: { code, edits: res.results ?? [], total: (res.results ?? []).length } };
+      }
+      const c1 = String(a.code1 ?? "").trim();
+      const c2 = String(a.code2 ?? "").trim();
+      if (!c1 || !c2) return { success: false, error: "code1 and code2 are required" };
+      const edit = await db.prepare(
+        "SELECT col1, col2, modifier_indicator, rationale FROM cci_edit WHERE (col1 = ?1 AND col2 = ?2) OR (col1 = ?2 AND col2 = ?1)",
+      ).bind(c1, c2).first<any>();
+      if (!edit) {
+        return { success: true, data: { code1: c1, code2: c2, edit_found: false, billable_together: true, message: "No NCCI edit found; codes may be billed together." } };
+      }
+      const modAllowed = edit.modifier_indicator === 1;
+      if (a.action === "check_with_modifier") {
+        const mod = String(a.modifier ?? "").trim().toUpperCase();
+        const distinct = ["59", "XE", "XS", "XP", "XU"].includes(mod);
+        const allowed = modAllowed && distinct;
+        return { success: true, data: {
+          code1: c1, code2: c2, edit_found: true, modifier: mod, modifier_indicator: edit.modifier_indicator,
+          modifier_allows_billing: allowed, rationale: edit.rationale,
+          message: allowed
+            ? `Modifier ${mod} can override this edit if documentation supports a distinct service.`
+            : modAllowed
+              ? `This edit allows a modifier, but ${mod || "(none)"} is not a valid distinct-service modifier.`
+              : "This edit cannot be overridden by any modifier (indicator 0).",
+        } };
+      }
+      return { success: true, data: { code1: c1, code2: c2, edit_found: true, billable_together: false, modifier_indicator: edit.modifier_indicator, modifier_can_override: modAllowed, rationale: edit.rationale } };
+    } catch (e: any) {
+      return { success: false, error: String(e?.message ?? e) };
+    }
+  },
+};
+
+// --------------------------------------------------------------------------
+// DRG grouper (MS-DRGs in D1)
+// --------------------------------------------------------------------------
+const DRG_BASE_RATE = 6131.0; // FY2024 approx national average
+export const drgGrouper: Skill = {
+  name: "drg_grouper",
+  description:
+    "Assign/look up MS-DRGs and calculate inpatient reimbursement (weight x base rate). Data in D1.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["lookup_drg", "calculate_reimbursement", "assign_drg"] },
+      drg_code: { type: "string" }, principal_dx: { type: "string" },
+      secondary_dx: { type: "array", items: { type: "string" } }, base_rate: { type: "number" },
+    },
+    required: ["action"],
+  },
+  async execute(a, ctx) {
+    const db = ctx?.env?.DB;
+    if (!db) return noDb();
+    const baseRate = Number(a.base_rate ?? DRG_BASE_RATE) || DRG_BASE_RATE;
+    const norm = (c: string) => String(c || "").replace(/^0+/, "").padStart(3, "0");
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    const getDrg = (c: string) => db.prepare("SELECT * FROM ms_drg WHERE drg = ?1").bind(norm(c)).first<any>();
+    try {
+      if (a.action === "lookup_drg" || a.action === "calculate_reimbursement") {
+        const d = await getDrg(String(a.drg_code ?? ""));
+        if (!d) return { success: false, error: `DRG ${a.drg_code} not found` };
+        return { success: true, data: { drg: d.drg, description: d.description, weight: d.weight, gmlos: d.gmlos, type: d.type, severity: d.severity, base_rate: baseRate, reimbursement: r2(d.weight * baseRate) } };
+      }
+      // assign_drg
+      const pdx = String(a.principal_dx ?? "").trim().toUpperCase();
+      if (!pdx) return { success: false, error: "principal_dx is required for assign_drg" };
+      const map = await db.prepare("SELECT base_drg, description FROM drg_dx WHERE dx = ?1").bind(pdx).first<any>();
+      if (!map) return { success: true, data: { principal_dx: pdx, drg_assigned: null, message: "No DRG mapping for this principal diagnosis in the local table." } };
+      const range = String(map.base_drg);
+      const secondary: string[] = a.secondary_dx ?? [];
+      const sev = secondary.length >= 2 ? "MCC" : secondary.length === 1 ? "CC" : "none";
+      let codes: string[] = [];
+      const m = range.match(/^(\d+)-(\d+)$/);
+      if (m) { for (let i = parseInt(m[1], 10); i <= parseInt(m[2], 10); i++) codes.push(String(i).padStart(3, "0")); }
+      else codes = [range];
+      let chosen: any = null;
+      for (const c of codes) {
+        const d = await getDrg(c);
+        if (d) { if (d.severity === sev) { chosen = d; break; } if (!chosen) chosen = d; }
+      }
+      if (!chosen) return { success: true, data: { principal_dx: pdx, base_drg_range: range, drg_assigned: null, message: "DRG range known but specific DRGs not in local table." } };
+      return { success: true, data: { principal_dx: pdx, base_drg_range: range, severity: sev, drg_assigned: chosen.drg, description: chosen.description, weight: chosen.weight, base_rate: baseRate, reimbursement: r2(chosen.weight * baseRate) } };
+    } catch (e: any) {
+      return { success: false, error: String(e?.message ?? e) };
+    }
+  },
+};
+
+// --------------------------------------------------------------------------
+// APC grouper (OPPS APCs in D1)
+// --------------------------------------------------------------------------
+export const apcGrouper: Skill = {
+  name: "apc_grouper",
+  description:
+    "Assign/look up outpatient APCs from CPT/HCPCS and estimate OPPS payment. Data in D1.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["assign_apc", "lookup_apc", "calculate_opps_payment", "device_intensive_check"] },
+      cpt_codes: { type: "array", items: { type: "string" } }, cpt_code: { type: "string" }, apc_code: { type: "string" },
+    },
+    required: ["action"],
+  },
+  async execute(a, ctx) {
+    const db = ctx?.env?.DB;
+    if (!db) return noDb();
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    const getApc = (c: string) => db.prepare("SELECT * FROM apc WHERE apc = ?1").bind(c).first<any>();
+    const mapCpt = (c: string) => db.prepare("SELECT cpt, apc, description FROM cpt_apc WHERE cpt = ?1").bind(c).first<any>();
+    try {
+      if (a.action === "lookup_apc") {
+        const d = await getApc(String(a.apc_code ?? "").trim());
+        if (!d) return { success: false, error: `APC ${a.apc_code} not found` };
+        return { success: true, data: { ...d, device_intensive: !!d.device_intensive } };
+      }
+      const cpts: string[] = a.cpt_codes ?? (a.cpt_code ? [a.cpt_code] : []);
+      if (a.action === "device_intensive_check") {
+        const cpt = String(a.cpt_code ?? cpts[0] ?? "").trim();
+        const map = await mapCpt(cpt);
+        if (!map) return { success: true, data: { cpt, mapped: false } };
+        const apc = await getApc(map.apc);
+        return { success: true, data: { cpt, apc: map.apc, device_intensive: !!(apc && apc.device_intensive) } };
+      }
+      if (!cpts.length) return { success: false, error: "cpt_codes is required" };
+      const assignments: any[] = [];
+      const notMapped: string[] = [];
+      let total = 0;
+      for (const cpt of cpts) {
+        const map = await mapCpt(String(cpt).trim());
+        if (!map) { notMapped.push(String(cpt)); continue; }
+        const apc = await getApc(map.apc);
+        if (!apc) { notMapped.push(String(cpt)); continue; }
+        total += apc.payment_rate;
+        assignments.push({ cpt: map.cpt, apc: apc.apc, description: apc.description, status_indicator: apc.status_indicator, payment_rate: apc.payment_rate, device_intensive: !!apc.device_intensive });
+      }
+      return { success: true, data: { assignments, not_mapped: notMapped, total_payment: r2(total) } };
+    } catch (e: any) {
+      return { success: false, error: String(e?.message ?? e) };
+    }
+  },
+};
+
 export const REGISTRY: Record<string, Skill> = {
   [rcmKpiCalculator.name]: rcmKpiCalculator,
   [emLevelAdvisor.name]: emLevelAdvisor,
@@ -954,6 +1119,9 @@ export const REGISTRY: Record<string, Skill> = {
   [codeLookup.name]: codeLookup,
   [feeSchedule.name]: feeSchedule,
   [denialAnalyzer.name]: denialAnalyzer,
+  [cciEditor.name]: cciEditor,
+  [drgGrouper.name]: drgGrouper,
+  [apcGrouper.name]: apcGrouper,
 };
 
 export function toolDefinitions(names: string[]) {
