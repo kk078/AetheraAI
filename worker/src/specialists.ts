@@ -26,7 +26,7 @@ export const SPECIALISTS: SpecialistConfig[] = [
       "denial_predictor", "appeals_writer", "drg_grouper", "apc_grouper", "edi_parser", "npi_lookup",
       "prior_auth", "medical_calculator", "ar_prioritizer", "rcm_kpi_calculator", "underpayment_detector",
       "patient_cost_estimator", "timely_filing_calculator", "em_level_advisor", "modifier_recommender",
-      "medical_necessity_builder", "hcc_gap_finder", "claim_scrubber", "telehealth_rules"],
+      "medical_necessity_builder", "hcc_gap_finder", "claim_scrubber", "telehealth_rules", "credentialing_tracker"],
     system_prompt:
       "You are Aethera's healthcare revenue-cycle specialist. Help with coding, billing, claims, denials, " +
       "appeals, and AR. Use the available tools to compute precise answers and cite codes/amounts.",

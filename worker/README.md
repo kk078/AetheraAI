@@ -62,13 +62,15 @@ wrangler vectorize create aethera-ai-memory --dimensions=768 --metric=cosine
 # then uncomment the [[vectorize]] block in wrangler.toml and redeploy
 ```
 
+## Skill port — complete
+All healthcare skills from the Python app are ported (22 + the general/RCM
+enhancement skills = 33 total in `REGISTRY`). Data-backed skills query D1
+(code_set, fee_rvu/gpci, denial_code, cci_edit, ms_drg/drg_dx, apc/cpt_apc, drug*,
+ndc, hcc/hcc_dx, benefit_plan); the rest are pure-logic.
+
 ## Not yet ported (roadmap)
-- **More data-backed skills** (`claim_scrubber`, `remittance_parser`,
-  `claim_status`, `contract_analyzer`, `quality_tracker`, `lab_interpreter`,
-  `compliance_checker`, …) — follow the phase-3 pattern: seed the dataset into
-  D1, query it from the skill. Done so far: `code_lookup`, `fee_schedule`,
-  `denial_analyzer`, `cci_editor`, `drg_grouper`, `apc_grouper`, `drug_reference`,
-  `ndc_pricer`, `risk_adjuster`, `eligibility_checker`.
+- Sensitivity/PHI routing layer; plugins/connectors; voice. (Local-only Python
+  features — local Ollama, Whisper/Piper — have no serverless equivalent.)
 - Sensitivity/PHI routing, plugins/connectors, voice.
 - Optional: enable the async task **Queue** (`wrangler queues create aethera-tasks`,
   then uncomment the `[[queues.*]]` blocks).

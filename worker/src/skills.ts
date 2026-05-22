@@ -1749,6 +1749,180 @@ export const telehealthRules: Skill = {
   },
 };
 
+// ==========================================================================
+// Batch C2c (pure-logic): contract_analyzer, quality_tracker,
+// compliance_checker, credentialing_tracker
+// ==========================================================================
+
+const CONTRACT_TERMS: Record<string, string> = {
+  fee_for_service: "Payment per service at a contracted allowed amount.",
+  percent_of_medicare: "Allowed amount = a percentage of the Medicare fee schedule.",
+  capitation: "Fixed per-member-per-month payment regardless of utilization.",
+  case_rate: "Single bundled payment for an episode/case.",
+  per_diem: "Fixed payment per inpatient day.",
+  withhold: "Portion of payment withheld, released on meeting quality/cost targets.",
+};
+const CONTRACT_FEES: Record<string, Record<string, number>> = {
+  "99213": { medicare: 92.0, aetna: 101.2, uhc: 96.6 },
+  "99214": { medicare: 131.0, aetna: 144.1, uhc: 137.55 },
+  "72148": { medicare: 254.0, aetna: 279.4, uhc: 266.7 },
+};
+export const contractAnalyzer: Skill = {
+  name: "contract_analyzer",
+  description: "Analyze payer contract term types and compare expected reimbursement by payer for a CPT.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["list_term_types", "get_term_type", "calculate_reimbursement", "compare_contracts"] },
+      term_type: { type: "string" }, cpt_code: { type: "string" }, payer: { type: "string" }, payers: { type: "array", items: { type: "string" } },
+    },
+    required: ["action"],
+  },
+  execute(a) {
+    const pct = (r: number, base: number) => Math.round((r / base) * 1000) / 10;
+    if (a.action === "list_term_types") return { success: true, data: { term_types: Object.keys(CONTRACT_TERMS) } };
+    if (a.action === "get_term_type") {
+      const t = String(a.term_type ?? "").toLowerCase();
+      if (!CONTRACT_TERMS[t]) return { success: false, error: `Unknown term type: ${a.term_type}` };
+      return { success: true, data: { term_type: t, description: CONTRACT_TERMS[t] } };
+    }
+    const cpt = String(a.cpt_code ?? "").trim();
+    const fees = CONTRACT_FEES[cpt];
+    if (!fees) return { success: false, error: `No contract fee data for CPT ${cpt}` };
+    if (a.action === "calculate_reimbursement") {
+      const payer = String(a.payer ?? "").toLowerCase();
+      if (fees[payer] == null) return { success: false, error: `No rate for payer ${a.payer}` };
+      return { success: true, data: { cpt_code: cpt, payer, expected_reimbursement: fees[payer], vs_medicare_pct: pct(fees[payer], fees.medicare) } };
+    }
+    const payers: string[] = (a.payers ?? Object.keys(fees)).map((p: string) => p.toLowerCase());
+    const rows = payers.filter((p) => fees[p] != null).map((p) => ({ payer: p, rate: fees[p], vs_medicare_pct: pct(fees[p], fees.medicare) })).sort((x, y) => y.rate - x.rate);
+    return { success: true, data: { cpt_code: cpt, comparison: rows, best_payer: rows[0]?.payer ?? null } };
+  },
+};
+
+const MEASURES: Record<string, { program: string; name: string; target: number; numerator: string; denominator: string }> = {
+  CBP: { program: "hedis", name: "Controlling High Blood Pressure", target: 70, numerator: "Members with BP<140/90", denominator: "Members 18-85 with hypertension" },
+  Q236: { program: "mips", name: "Controlling High Blood Pressure", target: 75, numerator: "Patients with BP<140/90", denominator: "Patients 18-85 with HTN" },
+  COL: { program: "stars", name: "Colorectal Cancer Screening", target: 80, numerator: "Members screened", denominator: "Members 45-75" },
+};
+const STAR_THRESHOLDS: Record<number, number> = { 1: 50, 2: 60, 3: 70, 4: 80, 5: 90 };
+export const qualityTracker: Skill = {
+  name: "quality_tracker",
+  description: "HEDIS/MIPS/Stars measure specs, rate calculation, gap identification, and star thresholds.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["get_measure_specs", "calculate_rate", "identify_gaps", "list_measures", "get_star_thresholds"] },
+      measure_id: { type: "string" }, program: { type: "string", enum: ["hedis", "mips", "stars"] },
+      numerator: { type: "number" }, denominator: { type: "number" }, current_rates: { type: "object" },
+    },
+    required: ["action"],
+  },
+  execute(a) {
+    if (a.action === "list_measures") {
+      const list = Object.entries(MEASURES).filter(([, m]) => !a.program || m.program === a.program).map(([id, m]) => ({ id, ...m }));
+      return { success: true, data: { measures: list } };
+    }
+    if (a.action === "get_star_thresholds") return { success: true, data: { thresholds: STAR_THRESHOLDS } };
+    if (a.action === "get_measure_specs") {
+      const m = MEASURES[String(a.measure_id ?? "").toUpperCase()];
+      if (!m) return { success: false, error: `Unknown measure: ${a.measure_id}` };
+      return { success: true, data: { measure_id: a.measure_id, ...m } };
+    }
+    if (a.action === "calculate_rate") {
+      const n = Number(a.numerator), d = Number(a.denominator);
+      if (!(d > 0)) return { success: false, error: "denominator must be > 0" };
+      const rate = Math.round((n / d) * 1000) / 10;
+      const m = MEASURES[String(a.measure_id ?? "").toUpperCase()];
+      return { success: true, data: { measure_id: a.measure_id, rate, target: m ? m.target : null, meets_target: m ? rate >= m.target : null } };
+    }
+    const rates = a.current_rates ?? {};
+    const gaps = Object.entries(MEASURES).filter(([id]) => rates[id] != null && Number(rates[id]) < MEASURES[id].target)
+      .map(([id, m]) => ({ measure_id: id, name: m.name, current: Number(rates[id]), target: m.target, gap: Math.round((m.target - Number(rates[id])) * 10) / 10 }));
+    return { success: true, data: { gaps, count: gaps.length } };
+  },
+};
+
+const COMPLIANCE_CHECKS: Record<string, { regulation: string; description: string; remediation: string }> = {
+  "HIPAA-1": { regulation: "hipaa", description: "Security risk analysis performed and documented", remediation: "Conduct and document an annual security risk analysis." },
+  "HIPAA-2": { regulation: "hipaa", description: "Workforce HIPAA training current", remediation: "Provide and document annual workforce training." },
+  "HIPAA-3": { regulation: "hipaa", description: "Business Associate Agreements in place", remediation: "Execute BAAs with all vendors handling PHI." },
+  "OIG-1": { regulation: "oig", description: "OIG LEIE exclusion screening of staff/vendors", remediation: "Screen all staff/vendors against the LEIE monthly." },
+  "STARK-1": { regulation: "stark", description: "Physician financial relationships meet an exception", remediation: "Document an applicable Stark exception for each arrangement." },
+  "AKS-1": { regulation: "aks", description: "Remuneration arrangements fit a safe harbor", remediation: "Structure arrangements to fit an AKS safe harbor; obtain counsel review." },
+};
+export const complianceChecker: Skill = {
+  name: "compliance_checker",
+  description: "Run HIPAA/OIG/Stark/AKS compliance checks, flag violations, and provide remediation guidance.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["run_audit", "flag_violations", "get_remediation", "list_regulations", "get_check_detail"] },
+      regulation: { type: "string", enum: ["hipaa", "oig", "stark", "aks", "all"] },
+      findings: { type: "array", items: { type: "object" } }, check_id: { type: "string" },
+    },
+    required: ["action"],
+  },
+  execute(a) {
+    if (a.action === "list_regulations") return { success: true, data: { regulations: ["hipaa", "oig", "stark", "aks"] } };
+    if (a.action === "get_check_detail") {
+      const c = COMPLIANCE_CHECKS[String(a.check_id ?? "").toUpperCase()];
+      if (!c) return { success: false, error: `Unknown check: ${a.check_id}` };
+      return { success: true, data: { check_id: a.check_id, ...c } };
+    }
+    const findings: any[] = a.findings ?? [];
+    if (a.action === "get_remediation") {
+      const fails = findings.filter((f) => f.status === "fail" || f.status === "partial").map((f) => ({ check_id: f.check_id, remediation: COMPLIANCE_CHECKS[String(f.check_id).toUpperCase()]?.remediation ?? "Review with the compliance officer." }));
+      return { success: true, data: { remediation: fails } };
+    }
+    if (a.action === "flag_violations") {
+      const v = findings.filter((f) => f.status === "fail").map((f) => ({ check_id: f.check_id, description: COMPLIANCE_CHECKS[String(f.check_id).toUpperCase()]?.description }));
+      return { success: true, data: { violations: v, count: v.length } };
+    }
+    const reg = a.regulation ?? "all";
+    const checks = Object.entries(COMPLIANCE_CHECKS).filter(([, c]) => reg === "all" || c.regulation === reg);
+    const byId: Record<string, string> = {};
+    for (const f of findings) byId[String(f.check_id).toUpperCase()] = f.status;
+    const results = checks.map(([id, c]) => ({ check_id: id, description: c.description, status: byId[id] ?? "not_assessed" }));
+    const assessed = results.filter((r) => r.status !== "not_assessed");
+    const passed = assessed.filter((r) => r.status === "pass").length;
+    return { success: true, data: { regulation: reg, results, score: assessed.length ? Math.round((passed / assessed.length) * 100) : null, passed, assessed: assessed.length, fails: assessed.filter((r) => r.status === "fail").length } };
+  },
+};
+
+const REQUIRED_CREDENTIALS = ["state_license", "dea", "board_cert", "npi", "malpractice_insurance"];
+export const credentialingTracker: Skill = {
+  name: "credentialing_tracker",
+  description: "Track provider credentials: status summary, upcoming expirations, and required-credential checklist.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["check_status", "upcoming_expirations", "generate_checklist"] },
+      credentials: { type: "array", items: { type: "object" } }, days: { type: "number" }, as_of: { type: "string" },
+    },
+    required: ["action", "credentials"],
+  },
+  execute(a) {
+    const creds: any[] = a.credentials ?? [];
+    const asOf = a.as_of ? new Date(String(a.as_of).slice(0, 10)) : new Date();
+    const daysTo = (d: string) => { const t = new Date(String(d).slice(0, 10)); return isNaN(t.getTime()) ? null : Math.floor((t.getTime() - asOf.getTime()) / 86400000); };
+    if (a.action === "generate_checklist") {
+      const present = new Set(creds.map((c) => String(c.type)));
+      const missing = REQUIRED_CREDENTIALS.filter((t) => !present.has(t));
+      return { success: true, data: { required: REQUIRED_CREDENTIALS, present: [...present], missing, complete: missing.length === 0 } };
+    }
+    const enriched = creds.map((c) => {
+      const dleft = c.expiry_date ? daysTo(c.expiry_date) : null;
+      return { type: c.type, expiry_date: c.expiry_date ?? null, days_remaining: dleft, status: dleft == null ? "unknown" : dleft < 0 ? "expired" : dleft <= 90 ? "expiring_soon" : "active" };
+    });
+    if (a.action === "upcoming_expirations") {
+      const win = Number(a.days ?? 90);
+      return { success: true, data: { within_days: win, expiring: enriched.filter((c) => c.days_remaining != null && c.days_remaining <= win && c.days_remaining >= 0), expired: enriched.filter((c) => c.status === "expired").length } };
+    }
+    return { success: true, data: { credentials: enriched, active: enriched.filter((c) => c.status === "active").length, expired: enriched.filter((c) => c.status === "expired").length, expiring_soon: enriched.filter((c) => c.status === "expiring_soon").length } };
+  },
+};
+
 export const REGISTRY: Record<string, Skill> = {
   [rcmKpiCalculator.name]: rcmKpiCalculator,
   [emLevelAdvisor.name]: emLevelAdvisor,
@@ -1779,6 +1953,10 @@ export const REGISTRY: Record<string, Skill> = {
   [appealsWriter.name]: appealsWriter,
   [priorAuth.name]: priorAuth,
   [telehealthRules.name]: telehealthRules,
+  [contractAnalyzer.name]: contractAnalyzer,
+  [qualityTracker.name]: qualityTracker,
+  [complianceChecker.name]: complianceChecker,
+  [credentialingTracker.name]: credentialingTracker,
 };
 
 export function toolDefinitions(names: string[]) {
