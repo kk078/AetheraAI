@@ -1504,6 +1504,119 @@ export const claimScrubber: Skill = {
   },
 };
 
+// --------------------------------------------------------------------------
+// Claim status (X12 277 status codes; pure-logic)
+// --------------------------------------------------------------------------
+const CLAIM_STATUS: Record<string, { category: string; description: string; final: boolean; action: string }> = {
+  "1": { category: "acknowledgement", description: "Acknowledgement/Receipt - claim received", final: false, action: "No action; awaiting processing." },
+  "2": { category: "acknowledgement", description: "Acknowledgement/Acceptance into adjudication", final: false, action: "No action; in adjudication." },
+  "3": { category: "acknowledgement", description: "Returned to entity - not processable", final: false, action: "Correct and resubmit." },
+  "4": { category: "acknowledgement", description: "Not found", final: false, action: "Verify submission; resubmit if needed." },
+  "19": { category: "pending", description: "Entity acknowledges receipt; processing", final: false, action: "Wait." },
+  "20": { category: "pending", description: "Accepted for processing", final: false, action: "Wait." },
+  "21": { category: "pending", description: "Missing or invalid information", final: false, action: "Provide the requested information." },
+  "65": { category: "finalized", description: "Finalized/Payment - paid in full", final: true, action: "Post payment." },
+  F0: { category: "finalized", description: "Finalized", final: true, action: "Review." },
+  F1: { category: "finalized", description: "Finalized/Payment - paid as primary", final: true, action: "Post payment." },
+  F2: { category: "finalized", description: "Finalized/Denial", final: true, action: "Review denial; appeal if appropriate." },
+  F3: { category: "finalized", description: "Finalized/Revised - adjudication info changed", final: true, action: "Review the revision." },
+  P1: { category: "pending", description: "Pending/In process", final: false, action: "Wait." },
+  P3: { category: "pending", description: "Pending/Requested information", final: false, action: "Provide requested info." },
+};
+
+export const claimStatus: Skill = {
+  name: "claim_status",
+  description: "Interpret X12 277 claim-status codes: category, recommended action, and whether the status is final.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["interpret_status", "get_action", "check_final", "full_status"] },
+      status_code: { type: "string" },
+    },
+    required: ["action", "status_code"],
+  },
+  execute(a) {
+    const code = String(a.status_code ?? "").toUpperCase().trim();
+    const s = CLAIM_STATUS[code];
+    if (!s) return { success: false, error: `Unknown claim status code: ${a.status_code}` };
+    if (a.action === "get_action") return { success: true, data: { status_code: code, action: s.action } };
+    if (a.action === "check_final") return { success: true, data: { status_code: code, final: s.final } };
+    return { success: true, data: { status_code: code, ...s } };
+  },
+};
+
+// --------------------------------------------------------------------------
+// Remittance parser (835 EDI parse; CARC/RARC decode via D1 denial_code)
+// --------------------------------------------------------------------------
+function parse835(text: string) {
+  const segs = text.split("~").map((s) => s.trim()).filter(Boolean);
+  let payer = "", payee = "", totalPaid = 0;
+  const claims: any[] = [];
+  let current: any = null;
+  const num = (v: any) => parseFloat(v || "0") || 0;
+  for (const seg of segs) {
+    const el = seg.split("*");
+    const id = el[0];
+    if (id === "BPR") totalPaid = num(el[2]);
+    else if (id === "NM1") { if (el[1] === "PR") payer = el[3] || ""; else if (el[1] === "PE") payee = el[3] || ""; }
+    else if (id === "CLP") {
+      if (current) claims.push(current);
+      current = { claim_id: el[1] || "", status: el[2] || "", charge: num(el[3]), paid: num(el[4]), patient_resp: num(el[5]), adjustments: [], service_lines: [] };
+    } else if (id === "SVC" && current) {
+      current.service_lines.push({ procedure: el[1] || "", charge: num(el[2]), paid: num(el[3]) });
+    } else if (id === "CAS" && current) {
+      const group = el[1] || "";
+      for (let i = 2; i + 1 < el.length; i += 3) {
+        if (el[i]) current.adjustments.push({ group, code: el[i], amount: num(el[i + 1]) });
+      }
+    }
+  }
+  if (current) claims.push(current);
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  return { payer, payee, total_paid: r2(totalPaid), claims };
+}
+
+export const remittanceParser: Skill = {
+  name: "remittance_parser",
+  description:
+    "Parse an 835 remittance (EDI): summarize payments, identify denials, calculate net, and decode CARC/RARC codes (D1).",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["parse_835", "summarize", "identify_denials", "calculate_net", "decode_carc", "decode_rarc"] },
+      remittance_text: { type: "string" }, code: { type: "string" },
+    },
+    required: ["action"],
+  },
+  async execute(a, ctx) {
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    try {
+      if (a.action === "decode_carc" || a.action === "decode_rarc") {
+        const db = ctx?.env?.DB;
+        if (!db) return noDb();
+        const code = String(a.code ?? "").toUpperCase().trim();
+        if (!code) return { success: false, error: "code is required" };
+        const row = await db.prepare("SELECT code, ctype, description, category, appeal_priority FROM denial_code WHERE code = ?1").bind(code).first<any>();
+        return { success: true, data: row ?? { code, description: `Unknown code: ${code}` } };
+      }
+      const text = String(a.remittance_text ?? "");
+      if (!text) return { success: false, error: "remittance_text is required" };
+      const parsed = parse835(text);
+      if (a.action === "parse_835") return { success: true, data: parsed };
+      if (a.action === "calculate_net") return { success: true, data: { total_paid: parsed.total_paid, claim_count: parsed.claims.length } };
+      if (a.action === "identify_denials") {
+        const denials = parsed.claims.filter((c) => c.paid === 0 || c.adjustments.some((adj: any) => adj.group === "CO"));
+        return { success: true, data: { denied_claims: denials, count: denials.length } };
+      }
+      const totalCharge = parsed.claims.reduce((s, c) => s + c.charge, 0);
+      const totalPatient = parsed.claims.reduce((s, c) => s + c.patient_resp, 0);
+      return { success: true, data: { payer: parsed.payer, payee: parsed.payee, total_paid: parsed.total_paid, total_charge: r2(totalCharge), total_patient_responsibility: r2(totalPatient), claim_count: parsed.claims.length } };
+    } catch (e: any) {
+      return { success: false, error: String(e?.message ?? e) };
+    }
+  },
+};
+
 export const REGISTRY: Record<string, Skill> = {
   [rcmKpiCalculator.name]: rcmKpiCalculator,
   [emLevelAdvisor.name]: emLevelAdvisor,
@@ -1529,6 +1642,8 @@ export const REGISTRY: Record<string, Skill> = {
   [medicalCalculator.name]: medicalCalculator,
   [labInterpreter.name]: labInterpreter,
   [claimScrubber.name]: claimScrubber,
+  [claimStatus.name]: claimStatus,
+  [remittanceParser.name]: remittanceParser,
 };
 
 export function toolDefinitions(names: string[]) {
