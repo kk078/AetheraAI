@@ -115,3 +115,16 @@ CREATE TABLE IF NOT EXISTS ndc (
   manufacturer TEXT DEFAULT '', hcpcs TEXT DEFAULT '', therapy_class TEXT DEFAULT '',
   asp REAL DEFAULT 0, awp REAL DEFAULT 0, wac REAL DEFAULT 0, nadac REAL DEFAULT 0, units_per_package INTEGER DEFAULT 1
 );
+
+-- Phase 6 batch B2: CMS-HCC risk model + benefit plans.
+CREATE TABLE IF NOT EXISTS hcc (
+  hcc TEXT PRIMARY KEY, description TEXT NOT NULL, weight REAL NOT NULL,
+  hierarchy_parent TEXT DEFAULT '', model TEXT DEFAULT 'V24'
+);
+CREATE TABLE IF NOT EXISTS hcc_dx (
+  dx TEXT NOT NULL, hcc TEXT NOT NULL, model TEXT DEFAULT 'V24', PRIMARY KEY (dx, model)
+);
+CREATE TABLE IF NOT EXISTS benefit_plan (
+  plan_type TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT DEFAULT '',
+  cost_sharing TEXT DEFAULT '{}', coverage_limits TEXT DEFAULT '{}', covered_services TEXT DEFAULT '[]'
+);

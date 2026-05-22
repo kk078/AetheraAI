@@ -1190,6 +1190,150 @@ export const ndcPricer: Skill = {
   },
 };
 
+// --------------------------------------------------------------------------
+// Risk adjuster (HCC weights in D1; demographic factors in code)
+// --------------------------------------------------------------------------
+const AGE_SEX_FACTORS: Record<string, number> = {
+  "0_34_male": 0.168, "0_34_female": 0.156, "35_44_male": 0.273, "35_44_female": 0.275,
+  "45_54_male": 0.470, "45_54_female": 0.488, "55_59_male": 0.632, "55_59_female": 0.654,
+  "60_64_male": 0.773, "60_64_female": 0.798, "65_69_male": 0.822, "65_69_female": 0.845,
+  "70_74_male": 0.916, "70_74_female": 0.940, "75_79_male": 1.020, "75_79_female": 1.045,
+  "80_84_male": 1.145, "80_84_female": 1.171, "85_89_male": 1.282, "85_89_female": 1.310,
+  "90_94_male": 1.444, "90_94_female": 1.472, "95_plus_male": 1.632, "95_plus_female": 1.660,
+};
+function ageBand(age: number): string {
+  if (age >= 95) return "95_plus"; if (age >= 90) return "90_94"; if (age >= 85) return "85_89";
+  if (age >= 80) return "80_84"; if (age >= 75) return "75_79"; if (age >= 70) return "70_74";
+  if (age >= 65) return "65_69"; if (age >= 60) return "60_64"; if (age >= 55) return "55_59";
+  if (age >= 45) return "45_54"; if (age >= 35) return "35_44"; return "0_34";
+}
+function demoFactor(age: number, sex: string): number {
+  const s = String(sex).toLowerCase().startsWith("f") ? "female" : "male";
+  return AGE_SEX_FACTORS[`${ageBand(age)}_${s}`] ?? 0;
+}
+
+export const riskAdjuster: Skill = {
+  name: "risk_adjuster",
+  description:
+    "Calculate CMS-HCC RAF scores from diagnoses + demographics (with hierarchy suppression) and look up HCCs. Data in D1.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["calculate_raf", "lookup_hcc"] },
+      diagnosis_codes: { type: "array", items: { type: "string" } },
+      age: { type: "number" }, sex: { type: "string" },
+      dual_eligible: { type: "boolean" }, institutional: { type: "boolean" },
+      model: { type: "string", enum: ["V24"] }, hcc: { type: "string" },
+    },
+    required: ["action"],
+  },
+  async execute(a, ctx) {
+    const db = ctx?.env?.DB;
+    if (!db) return noDb();
+    const model = a.model ?? "V24";
+    const r3 = (n: number) => Math.round(n * 1000) / 1000;
+    try {
+      if (a.action === "lookup_hcc") {
+        const d = await db.prepare("SELECT * FROM hcc WHERE hcc = ?1 AND model = ?2").bind(String(a.hcc ?? "").toUpperCase(), model).first<any>();
+        if (!d) return { success: false, error: `HCC ${a.hcc} not found` };
+        return { success: true, data: d };
+      }
+      const dxs: string[] = (a.diagnosis_codes ?? []).map((x: string) => String(x).toUpperCase().trim()).filter(Boolean);
+      if (!dxs.length) return { success: false, error: "diagnosis_codes is required for calculate_raf" };
+      // dx -> hcc, collect unique
+      const mapped: Record<string, any> = {};
+      for (const dx of dxs) {
+        const m = await db.prepare("SELECT hcc FROM hcc_dx WHERE dx = ?1 AND model = ?2").bind(dx, model).first<any>();
+        if (!m) continue;
+        if (!mapped[m.hcc]) {
+          const h = await db.prepare("SELECT hcc, description, weight, hierarchy_parent FROM hcc WHERE hcc = ?1 AND model = ?2").bind(m.hcc, model).first<any>();
+          if (h) mapped[h.hcc] = { ...h, from_dx: dx };
+        }
+      }
+      const present = new Set(Object.keys(mapped));
+      // hierarchy: suppress an HCC if its parent is also present
+      const surviving = Object.values(mapped).filter((h: any) => !(h.hierarchy_parent && present.has(h.hierarchy_parent)));
+      const suppressed = Object.values(mapped).filter((h: any) => h.hierarchy_parent && present.has(h.hierarchy_parent));
+      const disease = surviving.reduce((s: number, h: any) => s + h.weight, 0);
+      const demo = a.age != null && a.sex ? demoFactor(Number(a.age), a.sex) : 0;
+      const dual = a.dual_eligible ? 0.114 : 0;
+      const instMult = a.institutional ? 1.714 : 1.0;
+      const raf = r3((demo + disease + dual) * instMult);
+      return { success: true, data: {
+        model, raf_score: raf,
+        components: { demographic: r3(demo), disease: r3(disease), dual_eligible: dual, institutional_multiplier: instMult },
+        hccs: surviving.map((h: any) => ({ hcc: h.hcc, description: h.description, weight: h.weight })),
+        suppressed_by_hierarchy: suppressed.map((h: any) => h.hcc),
+      } };
+    } catch (e: any) {
+      return { success: false, error: String(e?.message ?? e) };
+    }
+  },
+};
+
+// --------------------------------------------------------------------------
+// Eligibility / benefit plan (plans in D1)
+// --------------------------------------------------------------------------
+function parseJson(s: any, fallback: any) {
+  try { return typeof s === "string" ? JSON.parse(s) : (s ?? fallback); } catch { return fallback; }
+}
+
+export const eligibilityChecker: Skill = {
+  name: "eligibility_checker",
+  description:
+    "Interpret plan benefits, check coverage, and estimate patient responsibility from a plan's cost-sharing. Data in D1.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["full_benefits", "interpret_benefit", "check_coverage", "calculate_responsibility"] },
+      plan_type: { type: "string", description: "e.g. medicare_a, medicare_b, commercial_ppo" },
+      service: { type: "string" }, charge: { type: "number" }, deductible_remaining: { type: "number" },
+    },
+    required: ["action", "plan_type"],
+  },
+  async execute(a, ctx) {
+    const db = ctx?.env?.DB;
+    if (!db) return noDb();
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    try {
+      const plan = await db.prepare("SELECT * FROM benefit_plan WHERE plan_type = ?1").bind(String(a.plan_type ?? "").toLowerCase().trim()).first<any>();
+      if (!plan) return { success: false, error: `Plan ${a.plan_type} not found` };
+      const costSharing = parseJson(plan.cost_sharing, {});
+      const covered = parseJson(plan.covered_services, []);
+      const limits = parseJson(plan.coverage_limits, {});
+
+      if (a.action === "full_benefits") {
+        return { success: true, data: { plan_type: plan.plan_type, name: plan.name, description: plan.description, cost_sharing: costSharing, coverage_limits: limits, covered_services: covered } };
+      }
+      if (a.action === "interpret_benefit") {
+        return { success: true, data: { plan_type: plan.plan_type, name: plan.name, cost_sharing: costSharing, covered_services: covered } };
+      }
+      if (a.action === "check_coverage") {
+        const svc = String(a.service ?? "").toLowerCase().trim();
+        const match = (covered as string[]).find((c) => String(c).toLowerCase().includes(svc) || svc.includes(String(c).toLowerCase()));
+        return { success: true, data: { plan_type: plan.plan_type, service: a.service, covered: !!match, matched_service: match ?? null } };
+      }
+      // calculate_responsibility
+      const charge = Number(a.charge ?? 0);
+      if (!(charge > 0)) return { success: false, error: "'charge' is required and must be > 0 for calculate_responsibility" };
+      const annualDed = Number(costSharing.annual_deductible ?? costSharing.deductible ?? 0) || 0;
+      const dedRemaining = a.deductible_remaining != null ? Number(a.deductible_remaining) : annualDed;
+      const coins = Number(costSharing.coinsurance ?? 0) || 0;
+      const dedApplied = Math.min(dedRemaining, charge);
+      const coinsurance = r2(Math.max(0, charge - dedApplied) * coins);
+      const patient = r2(dedApplied + coinsurance);
+      return { success: true, data: {
+        plan_type: plan.plan_type, charge: r2(charge),
+        estimated_patient_responsibility: patient,
+        breakdown: { deductible_applied: r2(dedApplied), coinsurance_rate: coins, coinsurance },
+        plan_pays: r2(charge - patient),
+      } };
+    } catch (e: any) {
+      return { success: false, error: String(e?.message ?? e) };
+    }
+  },
+};
+
 export const REGISTRY: Record<string, Skill> = {
   [rcmKpiCalculator.name]: rcmKpiCalculator,
   [emLevelAdvisor.name]: emLevelAdvisor,
@@ -1210,6 +1354,8 @@ export const REGISTRY: Record<string, Skill> = {
   [apcGrouper.name]: apcGrouper,
   [drugReference.name]: drugReference,
   [ndcPricer.name]: ndcPricer,
+  [riskAdjuster.name]: riskAdjuster,
+  [eligibilityChecker.name]: eligibilityChecker,
 };
 
 export function toolDefinitions(names: string[]) {
