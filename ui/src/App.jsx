@@ -29,6 +29,8 @@ const VIEW_LABELS = {
   dashboard: 'Healthcare Dashboard',
   'finance-dashboard': 'Finance Dashboard',
   'system-dashboard': 'System Dashboard',
+  alerts: 'Alerts Feed',
+  'action-queue': 'Action Queue',
   'code-lookup': 'Code Lookup',
   'claim-analyzer': 'Claim Analyzer',
   appeals: 'Appeals Workflow',
@@ -38,6 +40,7 @@ const VIEW_LABELS = {
   'coverage-checker': 'Coverage Checker',
   'edi-viewer': 'EDI Viewer',
   skills: 'Skill Browser',
+  automations: 'Automation Builder',
   conversations: 'Conversations',
   settings: 'Settings',
 };

@@ -19,6 +19,11 @@ import { analyzeSensitivity } from "./sensitivity";
 import { logAudit, queryAudit, auditStats } from "./audit";
 import { HEALTHCARE_ROUTES } from "./healthcare";
 import { getSettings, updateSettings } from "./settings";
+import {
+  listAlerts, acknowledgeAlert, listActionItems, addActionItem, completeActionItem, queueStats,
+  listAutomations, createAutomation, setAutomationEnabled, deleteAutomation,
+  runScheduledAutomations, runMessageAutomations, generateUpdateAlerts,
+} from "./proactive";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -151,6 +156,7 @@ async function handleChat(
       ip, sensitivity: sensitivity.level,
     }),
   );
+  waitUntil(runMessageAutomations(env, { message, specialist: routing.primary_specialist }));
 
   return {
     conversation_id: conversationId,
@@ -399,6 +405,51 @@ app.get("/api/dashboard", async (c) => {
   });
 });
 
+// --- Alerts ---
+app.get("/api/alerts", async (c) => {
+  const activeOnly = c.req.query("active_only") !== "false";
+  return c.json({ alerts: await listAlerts(c.env, { activeOnly }) });
+});
+app.post("/api/alerts/:id/acknowledge", async (c) => {
+  const ok = await acknowledgeAlert(c.env, c.req.param("id"));
+  return ok ? c.json({ acknowledged: true, id: c.req.param("id") }) : c.json({ error: "Alert not found" }, 404);
+});
+
+// --- Action queue ---
+app.get("/api/queue", async (c) => c.json({ items: await listActionItems(c.env, {}) }));
+app.get("/api/queue/stats", async (c) => c.json(await queueStats(c.env)));
+app.post("/api/queue", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  if (!body.title) return c.json({ error: "'title' is required" }, 400);
+  const id = await addActionItem(c.env, body);
+  return id ? c.json({ id, created: true }) : c.json({ error: "Could not create action item" }, 500);
+});
+app.post("/api/queue/:id/complete", async (c) => {
+  const ok = await completeActionItem(c.env, c.req.param("id"));
+  return ok ? c.json({ completed: true, id: c.req.param("id") }) : c.json({ error: "Item not found or already completed" }, 404);
+});
+
+// --- Automations ---
+app.get("/api/automations", async (c) => c.json({ automations: await listAutomations(c.env) }));
+app.post("/api/automations", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  if (!body.name) return c.json({ error: "'name' is required" }, 400);
+  const automation = await createAutomation(c.env, body);
+  return automation ? c.json({ automation }) : c.json({ error: "Could not create automation" }, 500);
+});
+app.post("/api/automations/:id/enable", async (c) => {
+  const ok = await setAutomationEnabled(c.env, c.req.param("id"), true);
+  return ok ? c.json({ enabled: true, id: c.req.param("id") }) : c.json({ error: "Automation not found" }, 404);
+});
+app.post("/api/automations/:id/disable", async (c) => {
+  const ok = await setAutomationEnabled(c.env, c.req.param("id"), false);
+  return ok ? c.json({ enabled: false, id: c.req.param("id") }) : c.json({ error: "Automation not found" }, 404);
+});
+app.delete("/api/automations/:id", async (c) => {
+  const ok = await deleteAutomation(c.env, c.req.param("id"));
+  return ok ? c.json({ deleted: true, id: c.req.param("id") }) : c.json({ error: "Automation not found" }, 404);
+});
+
 // --- Models ---
 app.get("/api/models", (c) =>
   c.json({
@@ -437,8 +488,7 @@ app.get("/api/news", async (c) => {
 // UI degrades gracefully instead of hitting an undefined route.
 const NOT_PORTABLE = [
   "/api/voice", "/api/clipboard", "/api/upload", "/api/backup", "/api/cloudflare",
-  "/api/plugins", "/api/connectors", "/api/temporal", "/api/alerts", "/api/queue",
-  "/api/automations",
+  "/api/plugins", "/api/connectors", "/api/temporal", "/api/pc",
   "/api/memory/facts", "/api/memory/learning", "/api/memory/knowledge-graph",
   "/api/memory/knowledge-gaps", "/api/memory/health-records", "/api/memory/consolidate",
   "/api/memory/forget",
@@ -461,10 +511,13 @@ async function scheduled(event: ScheduledController, env: Env, ctx: ExecutionCon
   const run = async () => {
     if (event.cron === "0 7 * * *") {
       await generateBriefing(env);
+      await runScheduledAutomations(env);
       return;
     }
     await checkUpdates(env);
+    await generateUpdateAlerts(env);
     await generateBriefing(env);
+    await runScheduledAutomations(env);
   };
   ctx.waitUntil(run());
 }

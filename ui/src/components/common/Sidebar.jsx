@@ -14,6 +14,8 @@ const navSections = [
       { icon: 'dashboard', label: 'Healthcare', view: 'dashboard' },
       { icon: 'finance', label: 'Finance', view: 'finance-dashboard' },
       { icon: 'system', label: 'System', view: 'system-dashboard' },
+      { icon: 'alerts', label: 'Alerts', view: 'alerts' },
+      { icon: 'action-queue', label: 'Action Queue', view: 'action-queue' },
     ],
   },
   {
@@ -33,6 +35,7 @@ const navSections = [
     title: 'Extensions',
     items: [
       { icon: 'skills', label: 'Skills', view: 'skills' },
+      { icon: 'automations', label: 'Automations', view: 'automations' },
     ],
   },
   {

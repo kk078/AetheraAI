@@ -129,6 +129,57 @@ CREATE TABLE IF NOT EXISTS benefit_plan (
   cost_sharing TEXT DEFAULT '{}', coverage_limits TEXT DEFAULT '{}', covered_services TEXT DEFAULT '[]'
 );
 
+-- Proactive: alerts, action queue, automations (D1-backed; cron + chat driven).
+CREATE TABLE IF NOT EXISTS alert (
+  id TEXT PRIMARY KEY,
+  severity TEXT NOT NULL DEFAULT 'info',           -- info | warning | urgent | critical
+  title TEXT NOT NULL,
+  message TEXT DEFAULT '',
+  details TEXT DEFAULT '',
+  source TEXT DEFAULT '',
+  category TEXT DEFAULT 'general',
+  metadata TEXT DEFAULT '{}',
+  acknowledged INTEGER DEFAULT 0,
+  acknowledged_at TEXT DEFAULT '',
+  dedup_key TEXT DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_alert_created ON alert(created_at);
+CREATE INDEX IF NOT EXISTS idx_alert_ack ON alert(acknowledged);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_alert_dedup ON alert(dedup_key) WHERE dedup_key <> '';
+
+CREATE TABLE IF NOT EXISTS action_item (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  details TEXT DEFAULT '',
+  priority TEXT DEFAULT 'normal',                  -- critical | urgent | normal | low
+  status TEXT DEFAULT 'pending',                   -- pending | completed
+  specialist TEXT DEFAULT '',
+  assignee TEXT DEFAULT '',
+  due_date TEXT DEFAULT '',
+  source TEXT DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  completed_at TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_action_status ON action_item(status);
+CREATE INDEX IF NOT EXISTS idx_action_created ON action_item(created_at);
+
+CREATE TABLE IF NOT EXISTS automation (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  trigger TEXT DEFAULT 'schedule',                 -- schedule | message_received | alert_created
+  condition TEXT DEFAULT 'always',                 -- always | contains_keyword | severity_is | specialist_is
+  condition_value TEXT DEFAULT '',
+  action TEXT DEFAULT 'create_alert',              -- create_alert | send_message | notify_channel | execute_skill
+  action_value TEXT DEFAULT '',
+  enabled INTEGER DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_run_at TEXT DEFAULT '',
+  run_count INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_automation_trigger ON automation(trigger, enabled);
+
 -- Compliance: append-only HIPAA audit trail (PHI redacted before write).
 CREATE TABLE IF NOT EXISTS audit_log (
   id TEXT PRIMARY KEY, ts TEXT NOT NULL DEFAULT (datetime('now')), user_id TEXT DEFAULT '',
