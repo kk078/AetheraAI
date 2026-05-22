@@ -206,14 +206,31 @@ app.post("/api/chat/multi-agent", async (c) => {
 });
 
 // SSE streaming chat. The agent loop is non-streaming, so we run it to
-// completion and emit the final answer as one SSE message + [DONE]. The shape
-// matches the non-streaming response so the UI can render it uniformly.
+// completion, then emit a metadata event followed by content chunks and [DONE]
+// — the protocol the UI's useChat hook consumes (type: "metadata" | "content").
 app.post("/api/chat/stream", async (c) => {
   const body = await c.req.json().catch(() => ({}));
   if (!body.message) return c.json({ error: "'message' is required" }, 400);
   const res = await handleChat(c.env, safeWaitUntil(c), c.req.header("cf-connecting-ip") ?? "", body);
   return streamSSE(c, async (stream) => {
-    await stream.writeSSE({ data: JSON.stringify({ type: "message", ...res }) });
+    await stream.writeSSE({
+      data: JSON.stringify({
+        type: "metadata",
+        data: {
+          specialist: res.specialist,
+          model: body.model ?? c.env.DEFAULT_MODEL,
+          confidence: res.confidence,
+          tool_calls: res.tools_used,
+          conversation_id: res.conversation_id,
+          sensitivity: res.sensitivity,
+        },
+      }),
+    });
+    const text = res.message.content || "(The model returned an empty response.)";
+    const CHUNK = 80;
+    for (let i = 0; i < text.length; i += CHUNK) {
+      await stream.writeSSE({ data: JSON.stringify({ type: "content", data: text.slice(i, i + CHUNK) }) });
+    }
     await stream.writeSSE({ data: "[DONE]" });
   });
 });
