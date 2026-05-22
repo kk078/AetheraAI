@@ -6,8 +6,9 @@ const AUD = "8719a614a2aecd72bef4d3d063a95f8999e9345297f5f13982400cb74f69da56";
 const env: any = { ACCESS_TEAM_DOMAIN: TEAM, ACCESS_AUD: AUD };
 
 function jwt(payload: any, header: any = { alg: "RS256", kid: "k1" }) {
-  const b = (o: any) => Buffer.from(JSON.stringify(o)).toString("base64url");
-  return `${b(header)}.${b(payload)}.${"AA"}`; // signature never reached for these cases
+  const b = (o: any) =>
+    btoa(JSON.stringify(o)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return `${b(header)}.${b(payload)}.AA`; // signature never reached for these cases
 }
 
 const future = Math.floor(Date.now() / 1000) + 3600;
