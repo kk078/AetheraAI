@@ -63,8 +63,10 @@ wrangler vectorize create aethera-ai-memory --dimensions=768 --metric=cosine
 ```
 
 ## Skill port — complete
-All healthcare skills from the Python app are ported (22 + the general/RCM
-enhancement skills = 33 total in `REGISTRY`). Data-backed skills query D1
+All healthcare skills from the Python app are ported (38 total in `REGISTRY`,
+including general/RCM enhancement skills and the `coverage_checker`,
+`denial_predictor`, `edi_parser`, `calculator` tools). Every tool advertised by
+a specialist resolves to a registered skill. Data-backed skills query D1
 (code_set, fee_rvu/gpci, denial_code, cci_edit, ms_drg/drg_dx, apc/cpt_apc, drug*,
 ndc, hcc/hcc_dx, benefit_plan); the rest are pure-logic.
 
