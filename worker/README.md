@@ -4,8 +4,28 @@ A Cloudflare-native rewrite of the orchestrator, replacing the Python/Docker
 stack. **Phase 1 is a vertical slice**, not feature parity with the Python app.
 
 ## What's here
-- **Hono** API on Workers: `/api/health`, `/api/chat`, `/api/skills`,
-  `/api/skills/:name/execute`, `/api/compliance/user-data/:userId`.
+- **Hono** API on Workers covering the React UI's surface:
+  - Core: `/api/health`, `/api/skills`, `/api/skills/:name/execute`, `/api/specialists`,
+    `/api/specialists/:name/query`.
+  - Chat: `/api/chat`, `/api/chat/stream` (SSE), `/api/chat/specialist/:name`,
+    `/api/chat/multi-agent`.
+  - Conversations (D1): `GET/DELETE /api/conversations[/:id]`.
+  - Healthcare tools (adapters over skills, see `src/healthcare.ts`):
+    `POST /api/healthcare/{code-lookup,code-search,denial-analyze,denial-predict,
+    appeal-generate,fee-schedule,npi-lookup,claim-analysis,cci-check,coverage,
+    drg-group,drug-lookup,risk-adjust,medical-calc,edi-parse}`; plus
+    `GET /api/codes/:codeType/:code`.
+  - Memory: `POST/GET /api/memory/search`, `POST /api/memory`,
+    `GET/POST /api/memory/profile/:userId`.
+  - Compliance: `GET /api/audit`, `GET /api/audit/stats`, `POST /api/audit/export`,
+    `DELETE /api/compliance/user-data/:userId`.
+  - Proactive: `/api/knowledge/updates`, `/api/knowledge/check`, `/api/briefing`,
+    `/api/briefing/generate`, `/api/news`, `/api/dashboard`.
+  - Settings/models: `GET/POST /api/settings`, `GET /api/models`.
+  - **Host-only / not-yet-ported** namespaces (voice, clipboard, upload, backup,
+    cloudflare tunnel, plugins, connectors, temporal, alerts, queue, automations,
+    and the heavier memory subsystems) return an explicit `501 {portable:false}`
+    so the UI degrades gracefully instead of hitting an undefined route.
 - **Agent loop** (`src/agent.ts`) — TS port of `orchestrator/agent.py`: the model
   calls tools, we execute them, feed results back, iterate.
 - **Router + specialists** (`src/router.ts`, `src/specialists.ts`) — config-driven
