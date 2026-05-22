@@ -16,7 +16,11 @@ try:
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
     CRYPTO_AVAILABLE = True
-except ImportError:
+except BaseException:
+    # Not just ImportError: a broken native backend (e.g. missing _cffi_backend)
+    # raises a pyo3 PanicException (a BaseException). Degrade gracefully either
+    # way — CRYPTO_AVAILABLE gates all encryption use below.
+    Fernet = None  # type: ignore
     CRYPTO_AVAILABLE = False
 
 
