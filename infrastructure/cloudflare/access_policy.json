@@ -1,28 +1,21 @@
 {
-  "policy_name": "Aethera AI - Email OTP Authentication",
-  "description": "Zero-trust access policy requiring email OTP verification for all Aethera services. Users must verify their email address via a one-time passcode before accessing the application.",
+  "policy_name": "Aethera AI - Login Required (Email OTP)",
+  "description": "Zero-trust Access policy for ai.aetherahealthcare.com. Only the listed email(s) can log in, via a one-time passcode, before any traffic reaches the app. This is a single-user deployment, so allowed_emails should contain just the owner's address.",
   "decision": "allow",
   "session_duration": "24h",
   "precedence": 1,
   "include": [
     {
-      "type": "email_domain",
-      "value": "{{DOMAIN}}"
+      "type": "email",
+      "value": "<YOUR_LOGIN_EMAIL>"
     }
   ],
   "require": [],
   "exclude": [],
   "applications": [
     {
-      "name": "Aethera AI - UI",
-      "domain": "aethera.{{DOMAIN}}",
-      "type": "self_hosted",
-      "session_duration": "24h",
-      "auto_redirect_to_identity": true
-    },
-    {
-      "name": "Aethera AI - API",
-      "domain": "api.{{DOMAIN}}",
+      "name": "Aethera AI",
+      "domain": "ai.aetherahealthcare.com",
       "type": "self_hosted",
       "session_duration": "24h",
       "auto_redirect_to_identity": true
@@ -38,8 +31,8 @@
       }
     }
   ],
-  "allowed_emails": [],
-  "allowed_email_domains": ["{{DOMAIN}}"],
+  "allowed_emails": ["<YOUR_LOGIN_EMAIL>"],
+  "allowed_email_domains": [],
   "ip_whitelist": [],
   "geo_restrictions": {
     "enabled": false,

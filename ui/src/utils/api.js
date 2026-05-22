@@ -1,8 +1,37 @@
 const API_BASE = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
+const API_KEY_STORAGE = 'aethera_api_key';
+
 class ApiClient {
   constructor(baseURL) {
     this.baseURL = baseURL;
+    // Bearer key for when the backend has API_AUTH_ENABLED=true. Prefer a
+    // user-set key (localStorage) and fall back to a build-time env var.
+    let stored = null;
+    try {
+      stored = typeof localStorage !== 'undefined' ? localStorage.getItem(API_KEY_STORAGE) : null;
+    } catch {
+      stored = null;
+    }
+    this.apiKey = stored || import.meta.env.VITE_API_KEY || '';
+  }
+
+  setApiKey(key) {
+    this.apiKey = key || '';
+    try {
+      if (key) localStorage.setItem(API_KEY_STORAGE, key);
+      else localStorage.removeItem(API_KEY_STORAGE);
+    } catch {
+      /* ignore storage errors (e.g. private mode) */
+    }
+  }
+
+  getApiKey() {
+    return this.apiKey;
+  }
+
+  _authHeaders() {
+    return this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {};
   }
 
   async request(endpoint, options = {}) {
@@ -11,6 +40,7 @@ class ApiClient {
       ...options,
       headers: {
         'Content-Type': 'application/json',
+        ...this._authHeaders(),
         ...options.headers,
       },
     };
@@ -18,6 +48,9 @@ class ApiClient {
     const response = await fetch(url, config);
 
     if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error('Unauthorized — set a valid API key in Settings.');
+      }
       const error = await response.json().catch(() => ({ detail: 'Request failed' }));
       throw new Error(error.detail || `HTTP ${response.status}`);
     }
@@ -111,6 +144,7 @@ class ApiClient {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', `${this.baseURL}/api/upload`);
+      if (this.apiKey) xhr.setRequestHeader('Authorization', `Bearer ${this.apiKey}`);
 
       if (onProgress) {
         xhr.upload.addEventListener('progress', (e) => {

@@ -32,6 +32,7 @@ from orchestrator.sensitivity import get_sensitivity_analyzer, SensitivityAnalyz
 from orchestrator.explainer import get_explainer_store, ReasoningChain, StepType
 from orchestrator.scenarios import ScenarioEngine
 from orchestrator.session_sync import SessionSync
+from orchestrator.agent import AgentResult, run_agent_loop
 
 # Lazy imports for skills, plugins, connectors, memory — loaded on startup
 _skill_registry = None
@@ -119,6 +120,34 @@ def _get_proactive_intelligence():
         except Exception as e:
             logger.warning(f"Proactive intelligence not available: {e}")
     return _proactive_intelligence
+
+
+_knowledge_updater = None
+
+
+def _get_knowledge_updater():
+    global _knowledge_updater
+    if _knowledge_updater is None:
+        try:
+            from proactive.knowledge_updater import get_knowledge_updater
+            _knowledge_updater = get_knowledge_updater()
+        except Exception as e:
+            logger.warning(f"Knowledge updater not available: {e}")
+    return _knowledge_updater
+
+
+_phi_tracker = None
+
+
+def _get_phi_tracker():
+    global _phi_tracker
+    if _phi_tracker is None:
+        try:
+            from orchestrator.phi_guard import get_tracker
+            _phi_tracker = get_tracker()
+        except Exception as e:
+            logger.warning(f"PHI taint tracker not available: {e}")
+    return _phi_tracker
 
 
 def _get_memory_manager():
@@ -234,6 +263,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("aethera-orchestrator")
 
+# Redact PHI/PII from all log output before it is emitted.
+try:
+    from orchestrator.phi_logging import install_phi_log_redaction
+    install_phi_log_redaction()  # attaches to the root logger + its handlers
+except Exception as _e:  # never block startup on logging setup
+    logger.warning(f"PHI log redaction not installed: {_e}")
+
 # =============================================================================
 # MODEL DISPLAY NAMES — Human-readable names for UI
 # =============================================================================
@@ -265,14 +301,45 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# CORS middleware
+# CORS middleware — origins configurable; default "*" for local/dev.
+_cors_origins = [o.strip() for o in os.getenv("CORS_ALLOW_ORIGINS", "*").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins or ["*"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def api_key_auth(request: Request, call_next):
+    """Enforce bearer-key auth on /api/* when API_AUTH_ENABLED=true (off by default)."""
+    try:
+        from orchestrator.auth import request_authorized
+        if not request_authorized(
+            request.url.path, request.method, request.headers.get("authorization")
+        ):
+            return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+    except Exception as e:  # never let the gate hard-fail the whole app
+        logger.warning(f"Auth middleware error (allowing request): {e}")
+    return await call_next(request)
+
+
+async def _ws_auth_ok(websocket: WebSocket) -> bool:
+    """Reject a WebSocket handshake when API auth is on and ?token= is missing/invalid.
+
+    Returns True if the connection may proceed (caller then calls accept()).
+    """
+    try:
+        from orchestrator.auth import ws_authorized
+        if ws_authorized(websocket.query_params.get("token")):
+            return True
+    except Exception as e:
+        logger.warning(f"WS auth check error (allowing): {e}")
+        return True
+    await websocket.close(code=1008)  # policy violation
+    return False
 
 # =============================================================================
 # PYDANTIC MODELS
@@ -480,6 +547,18 @@ async def chat(request: ChatRequest):
         # 1. Analyze sensitivity (PHI/PII detection)
         sensitivity_result = state.sensitivity.analyze(request.message)
 
+        # 1b. Pin the whole conversation to local models once it carries PHI/PII,
+        # so a clean-looking follow-up can't route prior PHI to a cloud provider.
+        tracker = _get_phi_tracker()
+        if tracker is not None:
+            from orchestrator.phi_guard import apply_taint
+            eff_phi, eff_pii = apply_taint(
+                tracker, conversation_id,
+                sensitivity_result.contains_phi, sensitivity_result.contains_pii,
+            )
+            sensitivity_result.contains_phi = eff_phi
+            sensitivity_result.contains_pii = eff_pii
+
         # 2. Route to specialist
         routing_result = state.router.route(request.message)
 
@@ -530,13 +609,15 @@ async def chat(request: ChatRequest):
 
         messages.append({"role": "user", "content": request.message})
 
-        # 5. Execute LLM call
-        response_content = await execute_llm_call(
+        # 5. Run the agentic loop (executes tools the model calls, then answers)
+        agent_result = await execute_llm_call(
             messages=messages,
             model=model_selection.model_name,
             tools=routing_result.recommended_tools,
             stream=request.stream
         )
+        response_content = agent_result.content
+        tools_used = agent_result.tools_used or routing_result.recommended_tools
 
         # 6. Create response
         # Detect teaching mode intent
@@ -568,7 +649,7 @@ async def chat(request: ChatRequest):
             specialist=routing_result.primary_specialist,
             model=model_selection.model_name,
             confidence=routing_result.confidence,
-            tools_used=routing_result.recommended_tools,
+            tools_used=tools_used,
             reasoning=routing_result.reasoning,
             timestamp=datetime.now(),
             teaching_mode=teaching_mode_data
@@ -690,7 +771,7 @@ async def chat_stream(request: ChatRequest):
         tool_defs = []
         if registry and routing_result.recommended_tools:
             for tn in routing_result.recommended_tools:
-                s = registry.get_skill(tn)
+                s = registry.get(tn)
                 if s:
                     tool_defs.append(s.to_tool_definition())
         if tool_defs:
@@ -943,7 +1024,7 @@ async def list_skills(category: Optional[str] = None):
     registry = _get_skill_registry()
     if registry is None:
         return {"skills": []}
-    skills = registry.list_skills()
+    skills = registry.list()
     if category:
         skills = [s for s in skills if s.get("category") == category]
     return {"skills": skills}
@@ -955,7 +1036,7 @@ async def get_skill(skill_name: str):
     registry = _get_skill_registry()
     if registry is None:
         raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
-    skill = registry.get_skill(skill_name)
+    skill = registry.get(skill_name)
     if skill is None:
         raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
     return {
@@ -1875,7 +1956,7 @@ async def enable_plugin(plugin_name: str):
         plugin = registry.get_plugin(plugin_name)
         if plugin is None:
             raise HTTPException(status_code=404, detail=f"Plugin '{plugin_name}' not found")
-        await plugin.connect(plugin.config or {})
+        await plugin.initialize()
         return {"status": "enabled", "plugin": plugin_name}
     except HTTPException:
         raise
@@ -1893,7 +1974,7 @@ async def disable_plugin(plugin_name: str):
         plugin = registry.get_plugin(plugin_name)
         if plugin is None:
             raise HTTPException(status_code=404, detail=f"Plugin '{plugin_name}' not found")
-        await plugin.disconnect()
+        await plugin.cleanup()
         return {"status": "disabled", "plugin": plugin_name}
     except HTTPException:
         raise
@@ -1937,7 +2018,7 @@ async def connect_to_source(connector_name: str, config: Dict[str, Any]):
         connector = registry.get_connector(connector_name)
         if connector is None:
             raise HTTPException(status_code=404, detail=f"Connector '{connector_name}' not found")
-        result = await connector.initialize(config)
+        result = await connector.initialize()
         return {"status": "connected" if result else "failed", "connector": connector_name}
     except HTTPException:
         raise
@@ -1985,8 +2066,10 @@ async def test_connector(connector_name: str):
 # =============================================================================
 
 @app.post("/api/healthcare/code-lookup")
-async def code_lookup(code: str, code_type: Optional[str] = None):
+async def code_lookup(payload: Dict[str, Any]):
     """Look up ICD-10, CPT, HCPCS, or CDT code."""
+    code = payload.get("code", "")
+    code_type = payload.get("code_type") or payload.get("codeType")
     registry = _get_skill_registry()
     if registry is None:
         return {"code": code, "description": "Code lookup unavailable", "code_type": code_type}
@@ -1998,8 +2081,15 @@ async def code_lookup(code: str, code_type: Optional[str] = None):
 
 
 @app.post("/api/healthcare/cci-check")
-async def cci_check(code1: str, code2: str, modifier: Optional[str] = None):
+async def cci_check(payload: Dict[str, Any]):
     """Check NCCI edit pair compatibility."""
+    code1 = payload.get("code1")
+    code2 = payload.get("code2")
+    modifier = payload.get("modifier")
+    # Accept a {codes: [code1, code2]} shape as well.
+    codes = payload.get("codes")
+    if isinstance(codes, list) and len(codes) >= 2:
+        code1, code2 = codes[0], codes[1]
     registry = _get_skill_registry()
     if registry is None:
         return {"compatible": True, "modifier_required": False}
@@ -2011,8 +2101,10 @@ async def cci_check(code1: str, code2: str, modifier: Optional[str] = None):
 
 
 @app.post("/api/healthcare/fee-schedule")
-async def fee_schedule_lookup(code: str, locality: Optional[str] = None):
+async def fee_schedule_lookup(payload: Dict[str, Any]):
     """Look up Medicare fee schedule amount."""
+    code = payload.get("code") or payload.get("cptCode") or ""
+    locality = payload.get("locality")
     registry = _get_skill_registry()
     if registry is None:
         return {"code": code, "amount": 0.0, "locality": locality or "national"}
@@ -2024,8 +2116,10 @@ async def fee_schedule_lookup(code: str, locality: Optional[str] = None):
 
 
 @app.post("/api/healthcare/coverage")
-async def coverage_check(code: str, payer: str):
+async def coverage_check(payload: Dict[str, Any]):
     """Check LCD/NCD coverage criteria."""
+    code = payload.get("code") or payload.get("cpt_code") or payload.get("cptCode") or ""
+    payer = payload.get("payer", "")
     registry = _get_skill_registry()
     if registry is None:
         return {"covered": True, "criteria": []}
@@ -2037,8 +2131,10 @@ async def coverage_check(code: str, payer: str):
 
 
 @app.post("/api/healthcare/denial-analyze")
-async def denial_analyze(car_code: str, rarc_code: Optional[str] = None):
+async def denial_analyze(payload: Dict[str, Any]):
     """Analyze denial codes and recommend actions."""
+    car_code = payload.get("car_code") or payload.get("carCode") or ""
+    rarc_code = payload.get("rarc_code") or payload.get("rarcCode")
     registry = _get_skill_registry()
     if registry is None:
         return {"car_code": car_code, "recommendation": "Appeal with documentation"}
@@ -2109,8 +2205,10 @@ async def code_search(data: Dict[str, Any]):
 
 
 @app.post("/api/healthcare/drg-group")
-async def drg_group(diagnoses: List[str], procedures: List[str]):
+async def drg_group(payload: Dict[str, Any]):
     """Determine DRG assignment."""
+    diagnoses = payload.get("diagnoses", [])
+    procedures = payload.get("procedures", [])
     registry = _get_skill_registry()
     if registry is None:
         return {"drg": "470", "description": "Major joint replacement", "weight": 2.12}
@@ -2122,8 +2220,9 @@ async def drg_group(diagnoses: List[str], procedures: List[str]):
 
 
 @app.post("/api/healthcare/drug-lookup")
-async def drug_lookup(drug_name: str):
+async def drug_lookup(payload: Dict[str, Any]):
     """Look up drug information."""
+    drug_name = payload.get("drug_name") or payload.get("drugName") or ""
     registry = _get_skill_registry()
     if registry is None:
         return {"drug_name": drug_name, "info": {}}
@@ -2135,8 +2234,9 @@ async def drug_lookup(drug_name: str):
 
 
 @app.post("/api/healthcare/npi-lookup")
-async def npi_lookup(npi: str):
+async def npi_lookup(payload: Dict[str, Any]):
     """Look up NPI registry information."""
+    npi = payload.get("npi", "")
     registry = _get_connector_registry()
     if registry is None:
         return {"npi": npi, "provider": {}}
@@ -2151,8 +2251,10 @@ async def npi_lookup(npi: str):
 
 
 @app.post("/api/healthcare/edi-parse")
-async def edi_parse(edi_content: str, transaction_type: str):
+async def edi_parse(payload: Dict[str, Any]):
     """Parse X12 EDI transaction."""
+    edi_content = payload.get("edi_content") or payload.get("transaction_set") or ""
+    transaction_type = payload.get("transaction_type") or payload.get("control_number") or ""
     registry = _get_skill_registry()
     if registry is None:
         return {"parsed": True, "data": {}}
@@ -2164,8 +2266,10 @@ async def edi_parse(edi_content: str, transaction_type: str):
 
 
 @app.post("/api/healthcare/risk-adjust")
-async def risk_adjust(diagnoses: List[str], demographics: Dict[str, Any]):
+async def risk_adjust(payload: Dict[str, Any]):
     """Calculate HCC/RAF score."""
+    diagnoses = payload.get("diagnoses", [])
+    demographics = payload.get("demographics", {})
     registry = _get_skill_registry()
     if registry is None:
         return {"raf_score": 1.0, "hccs": []}
@@ -2177,8 +2281,10 @@ async def risk_adjust(diagnoses: List[str], demographics: Dict[str, Any]):
 
 
 @app.post("/api/healthcare/medical-calc")
-async def medical_calculator(calc_type: str, values: Dict[str, float]):
+async def medical_calculator(payload: Dict[str, Any]):
     """Perform clinical calculation."""
+    calc_type = payload.get("calc_type") or payload.get("calcType") or ""
+    values = payload.get("values", {})
     registry = _get_skill_registry()
     if registry is None:
         return {"result": 0.0, "interpretation": "Normal"}
@@ -2187,6 +2293,124 @@ async def medical_calculator(calc_type: str, values: Dict[str, float]):
         return result.data if result.success else {"result": 0.0, "interpretation": "Normal", "error": result.error}
     except Exception:
         return {"result": 0.0, "interpretation": "Calculator unavailable"}
+
+# =============================================================================
+# KNOWLEDGE / AUTO-UPDATE ENDPOINTS
+# =============================================================================
+
+@app.get("/api/knowledge/updates")
+async def knowledge_updates(
+    days: int = 7,
+    source: Optional[str] = None,
+    category: Optional[str] = None,
+    applied_only: bool = False,
+    limit: int = 100,
+):
+    """Return the changelog of recent CMS/regulatory/security knowledge updates."""
+    updater = _get_knowledge_updater()
+    if updater is None:
+        return {"updates": [], "error": "Knowledge updater unavailable"}
+    try:
+        return {"updates": updater.get_changelog(
+            days=days, source=source, category=category,
+            applied_only=applied_only, limit=limit,
+        )}
+    except Exception as e:
+        return {"updates": [], "error": str(e)}
+
+
+@app.get("/api/knowledge/stats")
+async def knowledge_stats():
+    """Return knowledge-updater statistics (counts by source/category)."""
+    updater = _get_knowledge_updater()
+    if updater is None:
+        return {"error": "Knowledge updater unavailable"}
+    try:
+        return updater.get_stats()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/api/knowledge/check")
+async def knowledge_check(payload: Optional[Dict[str, Any]] = None):
+    """Fetch new updates from CMS/regulatory sources (optionally a subset)."""
+    updater = _get_knowledge_updater()
+    if updater is None:
+        return {"checked": False, "error": "Knowledge updater unavailable"}
+    sources = (payload or {}).get("sources")
+    try:
+        found = updater.check_updates(sources=sources)
+        return {"checked": True, "new_by_source": {k: len(v) for k, v in found.items()}}
+    except Exception as e:
+        return {"checked": False, "error": str(e)}
+
+
+@app.post("/api/knowledge/apply")
+async def knowledge_apply(payload: Optional[Dict[str, Any]] = None):
+    """Mark pending updates as applied so they inform the assistant's answers."""
+    updater = _get_knowledge_updater()
+    if updater is None:
+        return {"applied": 0, "error": "Knowledge updater unavailable"}
+    data = payload or {}
+    try:
+        applied = updater.apply_updates(
+            source=data.get("source"),
+            category=data.get("category"),
+            limit=data.get("limit", 100),
+        )
+        return {"applied": len(applied), "ids": [u.id for u in applied]}
+    except Exception as e:
+        return {"applied": 0, "error": str(e)}
+
+
+@app.post("/api/knowledge/auto-update")
+async def knowledge_auto_update():
+    """Run a full check-and-auto-apply cycle (the scheduled hands-off routine)."""
+    updater = _get_knowledge_updater()
+    if updater is None:
+        return {"error": "Knowledge updater unavailable"}
+    try:
+        return updater.run_auto_update()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# =============================================================================
+# COMPLIANCE — PHI RETENTION & RIGHT-TO-DELETE
+# =============================================================================
+
+@app.delete("/api/compliance/user-data/{user_id}")
+async def delete_user_data(user_id: str):
+    """HIPAA right-to-delete: remove a user's conversations and messages."""
+    store = _get_conversation_store()
+    if store is None:
+        return {"deleted": 0, "error": "Conversation store unavailable"}
+    try:
+        removed = store.delete_user_data(user_id)
+        await log_audit_event(
+            event_type="delete_user_data", conversation_id=user_id,
+            specialist="-", model="-", sensitivity="phi", duration_ms=0,
+        )
+        return {"user_id": user_id, "conversations_deleted": removed}
+    except Exception as e:
+        return {"deleted": 0, "error": str(e)}
+
+
+@app.post("/api/compliance/retention/cleanup")
+async def retention_cleanup(payload: Optional[Dict[str, Any]] = None):
+    """Apply the conversation retention policy (delete conversations older than N days)."""
+    days = (payload or {}).get("days")
+    if days is None:
+        days = int(os.getenv("CONVERSATION_RETENTION_DAYS", "2555"))  # ~7y default
+    store = _get_conversation_store()
+    if store is None:
+        return {"purged": 0, "error": "Conversation store unavailable"}
+    try:
+        purged = store.purge_older_than(int(days))
+        return {"retention_days": int(days), "conversations_purged": purged}
+    except Exception as e:
+        return {"purged": 0, "error": str(e)}
+
 
 # =============================================================================
 # CLOUDFLARE ENDPOINTS
@@ -3258,6 +3482,8 @@ async def voice_stream(websocket: WebSocket):
       {"type": "cancel"} — discard buffered audio
     Binary messages are audio chunks appended to the buffer.
     """
+    if not await _ws_auth_ok(websocket):
+        return
     await websocket.accept()
     audio_buffer = bytearray()
     is_recording = False
@@ -3727,6 +3953,8 @@ class PCConfirmationRequest(BaseModel):
 @app.websocket("/api/pc/ws")
 async def pc_control_ws(websocket: WebSocket):
     """WebSocket endpoint for host agent connection."""
+    if not await _ws_auth_ok(websocket):
+        return
     await websocket.accept()
     manager = _get_pc_control_manager()
     agent_id = None
@@ -3808,6 +4036,8 @@ async def get_pc_status():
 @app.websocket("/api/pc/confirmations")
 async def pc_confirmations_ws(websocket: WebSocket):
     """WebSocket for UI to receive confirmation requests in real-time."""
+    if not await _ws_auth_ok(websocket):
+        return
     await websocket.accept()
     manager = _get_pc_control_manager()
     manager.register_confirmation_ws(websocket)
@@ -3896,36 +4126,33 @@ IMPORTANT: This conversation contains sensitive personal information.
     except Exception:
         pass  # Temporal context is supplementary
 
+    # Inject recent CMS / regulatory updates so healthcare answers reflect current rules
+    if specialist and specialist.startswith("healthcare"):
+        try:
+            updater = _get_knowledge_updater()
+            if updater:
+                industry = updater.get_industry_context(
+                    category="healthcare_regulatory", days=30, limit=8
+                )
+                if industry:
+                    base_prompt += (
+                        "\n\n--- Recent CMS / Regulatory Updates ---\n"
+                        "Account for these recent industry changes when answering:\n"
+                        f"{industry}\n--- End Updates ---\n"
+                    )
+        except Exception:
+            pass  # Industry context is supplementary, never block the chat
+
     return base_prompt
 
 
-async def execute_llm_call(
-    messages: List[Dict[str, str]],
-    model: str,
-    tools: List[str],
-    stream: bool = True
-) -> str:
-    """Execute LLM call via LiteLLM proxy."""
+async def _litellm_client(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Post a chat-completions payload to LiteLLM, returning a parsed response.
+
+    On transport errors a synthetic response carrying a user-facing message is
+    returned so the agent loop terminates cleanly instead of raising.
+    """
     import httpx
-
-    # Build tool definitions from skill registry
-    tool_definitions = []
-    registry = _get_skill_registry()
-    if registry and tools:
-        for tool_name in tools:
-            skill = registry.get_skill(tool_name)
-            if skill:
-                tool_definitions.append(skill.to_tool_definition())
-
-    payload = {
-        "model": model,
-        "messages": messages,
-        "stream": False,  # Always use non-streaming for direct calls
-        "temperature": 0.7,
-        "max_tokens": 4096
-    }
-    if tool_definitions:
-        payload["tools"] = tool_definitions
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
         try:
@@ -3934,29 +4161,36 @@ async def execute_llm_call(
                 json=payload,
             )
             response.raise_for_status()
-            data = response.json()
-
-            # Extract content from response
-            choice = data.get("choices", [{}])[0]
-            message = choice.get("message", {})
-            content = message.get("content", "")
-
-            # If tool calls were made, include them
-            if message.get("tool_calls"):
-                for tc in message["tool_calls"]:
-                    func = tc.get("function", {})
-                    content += f"\n[Tool Call: {func.get('name', 'unknown')}]"
-
-            return content or "I apologize, but I was unable to generate a response. Please try again."
+            return response.json()
         except httpx.TimeoutException:
-            logger.error(f"LLM call timed out for model {model}")
-            return "I'm sorry, the request timed out. Please try again or use a different model."
+            logger.error(f"LLM call timed out for model {payload.get('model')}")
+            message = "I'm sorry, the request timed out. Please try again or use a different model."
         except httpx.ConnectError:
             logger.error(f"Cannot connect to LLM service at {LITELLM_URL}")
-            return "I'm sorry, the AI service is currently unavailable. Please try again in a moment."
+            message = "I'm sorry, the AI service is currently unavailable. Please try again in a moment."
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
-            return f"I encountered an error processing your request. Please try again."
+            message = "I encountered an error processing your request. Please try again."
+    return {"choices": [{"message": {"content": message}}]}
+
+
+async def execute_llm_call(
+    messages: List[Dict[str, str]],
+    model: str,
+    tools: List[str],
+    stream: bool = True
+) -> AgentResult:
+    """Run the agentic reason-act loop via LiteLLM, executing tools as the model calls them."""
+    result = await run_agent_loop(
+        messages=messages,
+        model=model,
+        tool_names=tools or [],
+        registry=_get_skill_registry(),
+        llm_client=_litellm_client,
+    )
+    if not result.content:
+        result.content = "I apologize, but I was unable to generate a response. Please try again."
+    return result
 
 
 async def log_audit_event(

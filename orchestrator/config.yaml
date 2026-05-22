@@ -48,6 +48,15 @@ specialists:
       - npi_lookup
       - prior_auth
       - medical_calculator
+      - ar_prioritizer
+      - rcm_kpi_calculator
+      - underpayment_detector
+      - patient_cost_estimator
+      - timely_filing_calculator
+      - em_level_advisor
+      - modifier_recommender
+      - medical_necessity_builder
+      - hcc_gap_finder
 
   healthcare_payer:
     enabled: true
@@ -82,6 +91,10 @@ specialists:
       - quality_tracker
       - ndc_pricer
       - denial_analyzer
+      - underpayment_detector
+      - patient_cost_estimator
+      - timely_filing_calculator
+      - hcc_gap_finder
 
   healthcare_regulatory:
     enabled: true
@@ -135,6 +148,8 @@ specialists:
       - medical_calculator
       - code_lookup
       - screening_guidelines
+      - em_level_advisor
+      - medical_necessity_builder
 
   healthcare_analytics:
     enabled: true
@@ -161,6 +176,9 @@ specialists:
       - calculator
       - data_visualizer
       - spreadsheet_analyzer
+      - rcm_kpi_calculator
+      - ar_prioritizer
+      - hcc_gap_finder
 
   healthcare_it:
     enabled: true
@@ -445,6 +463,8 @@ specialists:
       - data_visualizer
       - spreadsheet_analyzer
       - calculator
+      - data_insights
+      - structured_extractor
 
   general:
     enabled: true
@@ -457,6 +477,8 @@ specialists:
       - web_researcher
       - summarizer
       - document_creator
+      - structured_extractor
+      - data_insights
 
 # =============================================================================
 # MODEL CONFIGURATION

@@ -426,8 +426,11 @@ class ProactiveIntelligence:
             def _knowledge_update():
                 if self._knowledge_updater:
                     try:
-                        self._knowledge_updater.fetch_updates()
-                        logger.info("Scheduled knowledge update completed")
+                        summary = self._knowledge_updater.run_auto_update()
+                        logger.info(
+                            "Scheduled knowledge update completed: %d new, %d applied",
+                            summary.get("new_updates", 0), summary.get("applied", 0),
+                        )
                     except Exception as e:
                         logger.warning(f"Knowledge update failed: {e}")
 

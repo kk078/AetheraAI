@@ -221,6 +221,53 @@ class ConversationStore:
         row = cursor.fetchone()
         return row["count"] if row else 0
 
+    def delete_user_data(self, user_id: str) -> int:
+        """Delete all conversations and messages for a user (HIPAA right-to-delete).
+
+        Returns the number of conversations removed.
+        """
+        try:
+            rows = self._conn.execute(
+                "SELECT id FROM conversations WHERE user_id = ?", (user_id,)
+            ).fetchall()
+            conversation_ids = [r["id"] for r in rows]
+            for cid in conversation_ids:
+                self._conn.execute("DELETE FROM messages WHERE conversation_id = ?", (cid,))
+            self._conn.execute("DELETE FROM conversations WHERE user_id = ?", (user_id,))
+            self._conn.commit()
+            return len(conversation_ids)
+        except Exception as e:
+            print(f"Error deleting user data: {e}")
+            return 0
+
+    def purge_older_than(self, days: int) -> int:
+        """Delete conversations (and their messages) not updated within `days`.
+
+        Implements a data-retention policy. Returns conversations removed.
+        """
+        try:
+            cutoff = datetime.now().timestamp() - days * 86400
+            rows = self._conn.execute(
+                "SELECT id, updated_at FROM conversations"
+            ).fetchall()
+            stale = []
+            for r in rows:
+                ts = r["updated_at"]
+                try:
+                    when = datetime.fromisoformat(str(ts)).timestamp()
+                except (ValueError, TypeError):
+                    continue  # unparseable timestamp → leave it alone
+                if when < cutoff:
+                    stale.append(r["id"])
+            for cid in stale:
+                self._conn.execute("DELETE FROM messages WHERE conversation_id = ?", (cid,))
+                self._conn.execute("DELETE FROM conversations WHERE id = ?", (cid,))
+            self._conn.commit()
+            return len(stale)
+        except Exception as e:
+            print(f"Error purging old conversations: {e}")
+            return 0
+
 
 # Singleton instance
 _conversation_store: Optional[ConversationStore] = None

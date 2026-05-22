@@ -21,8 +21,8 @@ export default function DrugLookup() {
     setResult(null);
 
     try {
-      const response = await api.post('/api/healthcare/drug-lookup', { drug_name: query.trim() });
-      setResult(response);
+      const data = await api.lookupDrug(query.trim());
+      setResult(data);
     } catch (err) {
       setError(err.message || 'Drug lookup failed');
     } finally {

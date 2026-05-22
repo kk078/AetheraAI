@@ -62,7 +62,7 @@ export default function AutomationBuilder() {
   const handleDelete = async (automationId) => {
     setDeleting((prev) => new Set(prev).add(automationId));
     try {
-      await api.post(`/api/automations/${automationId}/delete`, {});
+      await api.deleteAutomation(automationId);
       setAutomations((prev) => prev.filter((a) => a.id !== automationId));
     } catch (err) {
       console.error('Failed to delete automation:', err);

@@ -1,0 +1,86 @@
+name: Deploy to Cloudflare
+
+# Triggers:
+#   - Manual "Run workflow" button (after this file lands on the default branch),
+#     with a choice of what to deploy (default: worker only).
+#   - Push to main -> deploy Worker + Pages.
+#   - Push to the active feature branch -> deploy Worker ONLY (Pages stays on main),
+#     so you can test the serverless API before merging.
+#
+# Required repo secrets (Settings > Secrets and variables > Actions):
+#   CLOUDFLARE_API_TOKEN  (Workers Scripts edit, D1 edit, Pages edit, Account read)
+#   CLOUDFLARE_ACCOUNT_ID
+# Worker runtime secrets (OLLAMA_API_KEY, API_KEYS) are set once in the Cloudflare
+# dashboard (Workers & Pages > aethera-ai > Settings > Variables and Secrets) or
+# via `wrangler secret put`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: "What to deploy"
+        type: choice
+        options: [worker, pages, both]
+        default: worker
+  push:
+    branches: [main, "claude/add-claude-documentation-AXi7P"]
+    paths:
+      - "worker/**"
+      - "ui/**"
+      - ".github/workflows/deploy-cloudflare.yml"
+
+jobs:
+  worker:
+    if: >-
+      github.event_name == 'push' ||
+      github.event.inputs.deploy_target == 'worker' ||
+      github.event.inputs.deploy_target == 'both'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install
+        working-directory: worker
+        run: npm install
+      # Verify the TypeScript port before shipping — fails the run on errors.
+      - name: Typecheck
+        working-directory: worker
+        run: npm run typecheck
+      - name: Test
+        working-directory: worker
+        run: npm test
+      - name: Deploy Worker
+        working-directory: worker
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  pages:
+    # Pages deploys only from main, or when explicitly selected in a manual run.
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event.inputs.deploy_target == 'pages' ||
+      github.event.inputs.deploy_target == 'both'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Build UI
+        working-directory: ui
+        run: |
+          npm install
+          npm run build
+        env:
+          VITE_API_URL: https://ai.aetherahealthcare.com
+          VITE_WS_URL: wss://ai.aetherahealthcare.com/api/voice/stream
+      - name: Deploy to Cloudflare Pages
+        working-directory: ui
+        run: npx wrangler pages deploy dist --project-name=aethera-ai
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

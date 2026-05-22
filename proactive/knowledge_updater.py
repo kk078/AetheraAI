@@ -37,6 +37,12 @@ DEFAULT_DB_PATH = os.environ.get("KNOWLEDGE_UPDATER_DB_PATH", "/data/proactive_k
 
 # Source URLs
 SOURCES = {
+    "cms_data_gov": {
+        "url": "https://data.cms.gov/",
+        "api_url": "https://data.cms.gov/data.json",
+        "interval_hours": 12,
+        "category": "healthcare_regulatory",
+    },
     "cms_transmittals": {
         "url": "https://www.cms.gov/Regulations-and-Guidance/Guidance/Transmittals",
         "api_url": "https://www.cms.gov/Medicare/Medicare-Fee-for-Service-Payment/AcuteInpatientPPS/Downloads/CMS-Transmittals-List.json",
@@ -81,6 +87,27 @@ SOURCES = {
         "category": "security",
     },
 }
+
+
+def _parse_date(value: Any) -> Optional[datetime]:
+    """Best-effort parse of a date/datetime string into a UTC-aware datetime.
+
+    Returns None when the value can't be parsed, so callers can decide whether
+    to keep or drop an item rather than crash on odd source formats.
+    """
+    if not value or not isinstance(value, str):
+        return None
+    text = value.strip().replace("Z", "+00:00")
+    candidates = [text, text[:10]]  # full ISO, then bare YYYY-MM-DD
+    for candidate in candidates:
+        try:
+            dt = datetime.fromisoformat(candidate)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except (ValueError, TypeError):
+            continue
+    return None
 
 
 class KnowledgeUpdate:
@@ -259,6 +286,7 @@ class KnowledgeUpdater:
         new_updates: List[KnowledgeUpdate] = []
 
         fetcher_map = {
+            "cms_data_gov": self._fetch_cms_data_gov,
             "federal_register": self._fetch_federal_register,
             "fda_safety": self._fetch_fda_safety,
             "nvd_cves": self._fetch_nvd_cves,
@@ -320,6 +348,57 @@ class KnowledgeUpdater:
     # ---------------------------------------------------------------------------
     # Source-Specific Fetchers
     # ---------------------------------------------------------------------------
+
+    def _fetch_cms_data_gov(self, config: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Fetch recently-modified datasets from the CMS open-data catalog.
+
+        data.cms.gov publishes a DCAT-US catalog at /data.json listing every
+        dataset with a ``modified`` timestamp. We surface datasets modified in
+        the last 14 days as industry updates — this is the canonical "what
+        changed on the CMS site" signal (fee schedules, code sets, coverage
+        data, etc.).
+        """
+        api_url = config.get("api_url", "")
+        try:
+            with httpx.Client(timeout=self._http_timeout, headers={"User-Agent": self._user_agent}) as client:
+                resp = client.get(api_url)
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as exc:
+            logger.error("CMS data.gov fetch failed: %s", exc)
+            return []
+
+        datasets = data.get("dataset", []) if isinstance(data, dict) else []
+        cutoff = datetime.now(timezone.utc) - timedelta(days=14)
+        items: List[Dict[str, Any]] = []
+
+        for ds in datasets:
+            if not isinstance(ds, dict):
+                continue
+            modified = ds.get("modified", "") or ""
+            modified_dt = _parse_date(modified)
+            # Skip datasets we can confidently date as older than the cutoff.
+            if modified_dt is not None and modified_dt < cutoff:
+                continue
+
+            identifier = ds.get("identifier") or ds.get("title", "")
+            publisher = ds.get("publisher") if isinstance(ds.get("publisher"), dict) else {}
+            items.append({
+                "source_key": str(identifier),
+                "title": ds.get("title", "CMS Dataset Update"),
+                "summary": (ds.get("description", "") or "")[:500],
+                "url": ds.get("landingPage") or str(identifier),
+                "published_date": modified,
+                "metadata": {
+                    "modified": modified,
+                    "keyword": ds.get("keyword", []),
+                    "publisher": publisher.get("name", "CMS"),
+                },
+            })
+
+        # Newest first, capped so a first run can't flood the changelog.
+        items.sort(key=lambda i: i.get("published_date", ""), reverse=True)
+        return items[:25]
 
     def _fetch_federal_register(self, config: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Fetch CMS-related documents from the Federal Register API."""
@@ -613,6 +692,55 @@ class KnowledgeUpdater:
             logger.info("Applied %d knowledge updates", len(applied))
 
         return applied
+
+    def run_auto_update(
+        self,
+        auto_apply_categories: tuple = ("healthcare_regulatory",),
+    ) -> Dict[str, Any]:
+        """Check all due sources and auto-apply updates in the given categories.
+
+        This is the hands-off entry point for the proactive scheduler: it lets
+        the assistant adapt to industry changes without manual intervention.
+        Returns a summary of what was fetched and applied.
+        """
+        found = self.check_updates()
+        total_new = sum(len(v) for v in found.values())
+
+        applied_count = 0
+        for category in auto_apply_categories:
+            applied_count += len(self.apply_updates(category=category))
+
+        summary = {
+            "new_updates": total_new,
+            "by_source": {k: len(v) for k, v in found.items()},
+            "applied": applied_count,
+        }
+        logger.info("Auto-update: %d new, %d applied", total_new, applied_count)
+        return summary
+
+    def get_industry_context(
+        self,
+        category: str = "healthcare_regulatory",
+        days: int = 30,
+        limit: int = 8,
+    ) -> str:
+        """Return a compact text block of recent updates for prompt injection.
+
+        Used by the orchestrator to make specialist answers reflect current CMS
+        and regulatory changes. Returns an empty string when nothing is recent.
+        """
+        entries = self.get_changelog(days=days, category=category, limit=limit)
+        if not entries:
+            return ""
+
+        lines = []
+        for entry in entries:
+            date = (entry.get("published_date") or entry.get("fetched_at") or "")[:10]
+            title = (entry.get("title") or "").strip()
+            source = entry.get("source", "")
+            if title:
+                lines.append(f"  - [{date}] {title} (source: {source})")
+        return "\n".join(lines)
 
     # ---------------------------------------------------------------------------
     # Get Changelog

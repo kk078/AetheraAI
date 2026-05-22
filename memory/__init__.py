@@ -13,27 +13,36 @@ Persistent memory system for Aethera:
 - Knowledge gap tracker
 """
 
-from memory.vector_store import VectorStore
-from memory.conversation_store import ConversationStore
-from memory.user_profile import UserProfile
-from memory.knowledge_graph import KnowledgeGraph
-from memory.health_records import HealthRecords
-from memory.fact_store import FactStore
-from memory.contradiction_detector import ContradictionDetector
-from memory.learning import LearningStore
-from memory.knowledge_gaps import KnowledgeGapStore
-from memory.memory_manager import MemoryManager, get_memory_manager
+import logging
 
-__all__ = [
-    "VectorStore",
-    "ConversationStore",
-    "UserProfile",
-    "KnowledgeGraph",
-    "HealthRecords",
-    "FactStore",
-    "ContradictionDetector",
-    "LearningStore",
-    "KnowledgeGapStore",
-    "MemoryManager",
-    "get_memory_manager",
-]
+logger = logging.getLogger("aethera.memory")
+
+# Failure-tolerant imports: one subsystem's missing/broken optional dependency
+# (e.g. chromadb, or a broken cryptography native backend) must not make the
+# whole memory package — including pure-stdlib stores like ConversationStore —
+# unimportable. Mirrors proactive/__init__.py and specialists/__init__.py.
+# BaseException is caught because a broken native extension can raise a pyo3
+# PanicException (not an Exception subclass) at import time.
+_OPTIONAL_EXPORTS = {
+    "VectorStore": ("memory.vector_store", "VectorStore"),
+    "ConversationStore": ("memory.conversation_store", "ConversationStore"),
+    "UserProfile": ("memory.user_profile", "UserProfile"),
+    "KnowledgeGraph": ("memory.knowledge_graph", "KnowledgeGraph"),
+    "HealthRecords": ("memory.health_records", "HealthRecords"),
+    "FactStore": ("memory.fact_store", "FactStore"),
+    "ContradictionDetector": ("memory.contradiction_detector", "ContradictionDetector"),
+    "LearningStore": ("memory.learning", "LearningStore"),
+    "KnowledgeGapStore": ("memory.knowledge_gaps", "KnowledgeGapStore"),
+    "MemoryManager": ("memory.memory_manager", "MemoryManager"),
+    "get_memory_manager": ("memory.memory_manager", "get_memory_manager"),
+}
+
+__all__ = []
+
+for _name, (_module, _attr) in _OPTIONAL_EXPORTS.items():
+    try:
+        _mod = __import__(_module, fromlist=[_attr])
+        globals()[_name] = getattr(_mod, _attr)
+        __all__.append(_name)
+    except BaseException as _exc:  # noqa: BLE001 - tolerate broken native deps
+        logger.debug("Memory export '%s' unavailable: %s", _name, _exc)

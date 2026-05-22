@@ -1,0 +1,41 @@
+# =============================================================================
+# Aethera AI - Cloudflare Tunnel config for ai.aetherahealthcare.com
+# =============================================================================
+# Single-domain, path-routed: API + WebSockets go to the orchestrator, every
+# other path goes to the UI. Use this when running cloudflared directly on the
+# host (config-as-code mode). For the Docker overlay use token mode instead
+# (see docker-compose.cloudflared.yml).
+#
+# Fill in before use:
+#   <TUNNEL_ID>   - from `cloudflared tunnel list`
+#   <CREDENTIALS> - path to the tunnel credentials JSON
+# If cloudflared runs in the same Docker network, replace localhost with the
+# service names (orchestrator / ui) instead.
+# =============================================================================
+
+tunnel: <TUNNEL_ID>
+credentials-file: <CREDENTIALS>
+
+ingress:
+  # API + health (FastAPI orchestrator)
+  - hostname: ai.aetherahealthcare.com
+    path: ^/api/.*
+    service: http://localhost:8000
+    originRequest:
+      noTLSVerify: true
+
+  # WebSockets (voice/PC control) — also served by the orchestrator
+  - hostname: ai.aetherahealthcare.com
+    path: ^/ws.*
+    service: http://localhost:8000
+    originRequest:
+      noTLSVerify: true
+
+  # Everything else -> React UI (nginx)
+  - hostname: ai.aetherahealthcare.com
+    service: http://localhost:3000
+    originRequest:
+      noTLSVerify: true
+
+  # Catch-all (must be last)
+  - service: http_status:404

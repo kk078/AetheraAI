@@ -591,6 +591,203 @@ TOOL_DEFINITIONS: Dict[str, Dict[str, Any]] = {
             }
         }
     },
+    "ar_prioritizer": {
+        "type": "function",
+        "function": {
+            "name": "ar_prioritizer",
+            "description": "Prioritize an AR worklist by aging, dollars-at-risk, and payer collectibility; flags timely-filing risk.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["prioritize", "aging_summary"], "description": "Ranked worklist or bucket totals"},
+                    "accounts": {"type": "array", "items": {"type": "object"}, "description": "AR accounts (account_id, balance, age_days/date_of_service, payer_class)"},
+                    "limit": {"type": "integer", "description": "Max accounts in the ranked worklist"}
+                },
+                "required": ["accounts"]
+            }
+        }
+    },
+    "rcm_kpi_calculator": {
+        "type": "function",
+        "function": {
+            "name": "rcm_kpi_calculator",
+            "description": "Compute revenue-cycle KPIs (days in AR, clean claim/denial/collection rates, AR>90) from raw figures and grade vs benchmarks.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "total_ar": {"type": "number"},
+                    "average_daily_charges": {"type": "number"},
+                    "total_charges": {"type": "number"},
+                    "total_payments": {"type": "number"},
+                    "contractual_adjustments": {"type": "number"},
+                    "total_claims": {"type": "integer"},
+                    "clean_claims": {"type": "integer"},
+                    "denied_claims": {"type": "integer"},
+                    "ar_over_90": {"type": "number"}
+                }
+            }
+        }
+    },
+    "underpayment_detector": {
+        "type": "function",
+        "function": {
+            "name": "underpayment_detector",
+            "description": "Detect payer underpayments by comparing paid amounts to contractually-expected rates per claim line; totals recoverable variance.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lines": {"type": "array", "items": {"type": "object"}, "description": "Claim lines (cpt, units, expected_rate, paid_amount)"},
+                    "tolerance": {"type": "number", "description": "Dollar tolerance before flagging"}
+                },
+                "required": ["lines"]
+            }
+        }
+    },
+    "patient_cost_estimator": {
+        "type": "function",
+        "function": {
+            "name": "patient_cost_estimator",
+            "description": "Estimate patient out-of-pocket cost from benefits (deductible, coinsurance, copay, OOP max) or build a No Surprises Act Good Faith Estimate.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["estimate", "good_faith_estimate"]},
+                    "charge": {"type": "number"},
+                    "allowed_amount": {"type": "number"},
+                    "deductible_remaining": {"type": "number"},
+                    "coinsurance_rate": {"type": "number", "description": "Fraction, e.g. 0.2"},
+                    "copay": {"type": "number"},
+                    "oop_max_remaining": {"type": "number"},
+                    "items": {"type": "array", "items": {"type": "object"}, "description": "GFE line items"}
+                }
+            }
+        }
+    },
+    "timely_filing_calculator": {
+        "type": "function",
+        "function": {
+            "name": "timely_filing_calculator",
+            "description": "Compute claim timely-filing deadlines from date of service and payer; reports days remaining and status (ok/at_risk/expired).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["calculate", "batch"]},
+                    "date_of_service": {"type": "string", "description": "YYYY-MM-DD"},
+                    "payer_class": {"type": "string"},
+                    "filing_limit_days": {"type": "integer"},
+                    "as_of": {"type": "string"},
+                    "claims": {"type": "array", "items": {"type": "object"}}
+                }
+            }
+        }
+    },
+    "em_level_advisor": {
+        "type": "function",
+        "function": {
+            "name": "em_level_advisor",
+            "description": "Recommend an office/outpatient E/M code (99202-99215, 2021+ rules) by total time or MDM.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "method": {"type": "string", "enum": ["time", "mdm"]},
+                    "patient_type": {"type": "string", "enum": ["new", "established"]},
+                    "total_time_minutes": {"type": "number"},
+                    "mdm_level": {"type": "string", "enum": ["straightforward", "low", "moderate", "high"]},
+                    "problems_level": {"type": "string", "enum": ["straightforward", "low", "moderate", "high"]},
+                    "data_level": {"type": "string", "enum": ["straightforward", "low", "moderate", "high"]},
+                    "risk_level": {"type": "string", "enum": ["straightforward", "low", "moderate", "high"]}
+                },
+                "required": ["patient_type"]
+            }
+        }
+    },
+    "modifier_recommender": {
+        "type": "function",
+        "function": {
+            "name": "modifier_recommender",
+            "description": "Recommend CPT/HCPCS modifiers (25, 59/X{EPSU}, 50, 51, 76/77, 26/TC, 58/79/24, RT/LT, ...) for a billing scenario.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cpt": {"type": "string"},
+                    "scenario": {"type": "object", "description": "Boolean scenario flags plus optional 'side' and 'x_subset'"}
+                },
+                "required": ["scenario"]
+            }
+        }
+    },
+    "medical_necessity_builder": {
+        "type": "function",
+        "function": {
+            "name": "medical_necessity_builder",
+            "description": "Build a structured medical-necessity rationale linking a service to diagnoses, indications, and failed conservative care, with a documentation checklist.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cpt": {"type": "string"},
+                    "service_description": {"type": "string"},
+                    "diagnoses": {"type": "array", "items": {"type": "string"}},
+                    "clinical_indications": {"type": "array", "items": {"type": "string"}},
+                    "failed_conservative": {"type": "array", "items": {"type": "string"}},
+                    "supporting_findings": {"type": "array", "items": {"type": "string"}}
+                },
+                "required": ["cpt", "diagnoses"]
+            }
+        }
+    },
+    "hcc_gap_finder": {
+        "type": "function",
+        "function": {
+            "name": "hcc_gap_finder",
+            "description": "Find HCC risk-adjustment recapture gaps (prior-year HCCs not recaptured) and suspected new HCCs; estimates RAF and revenue impact.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "current_year_dx": {"type": "array", "items": {"type": "string"}},
+                    "prior_year_hccs": {"type": "array", "items": {"type": "string"}},
+                    "revenue_per_raf": {"type": "number"}
+                },
+                "required": ["prior_year_hccs"]
+            }
+        }
+    },
+    "structured_extractor": {
+        "type": "function",
+        "function": {
+            "name": "structured_extractor",
+            "description": "Extract structured fields from free text using typed patterns (email, phone, date, ssn, mrn, npi, money, icd10, cpt, zip) or custom regex/keyword.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["extract", "extract_all"]},
+                    "text": {"type": "string"},
+                    "fields": {"type": "array", "items": {"type": "object"}, "description": "Field specs: {name, type|regex, keyword?}"}
+                },
+                "required": ["text", "fields"]
+            }
+        }
+    },
+    "data_insights": {
+        "type": "function",
+        "function": {
+            "name": "data_insights",
+            "description": "Analyze an array of records: describe (stats), group_by (aggregate), or outliers (z-score).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["describe", "group_by", "outliers"]},
+                    "records": {"type": "array", "items": {"type": "object"}},
+                    "fields": {"type": "array", "items": {"type": "string"}},
+                    "group_field": {"type": "string"},
+                    "agg_field": {"type": "string"},
+                    "agg": {"type": "string", "enum": ["sum", "mean", "count", "min", "max"]},
+                    "field": {"type": "string"},
+                    "z_threshold": {"type": "number"}
+                },
+                "required": ["action", "records"]
+            }
+        }
+    },
 }
 
 
