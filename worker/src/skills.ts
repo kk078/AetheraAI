@@ -1617,6 +1617,138 @@ export const remittanceParser: Skill = {
   },
 };
 
+// --------------------------------------------------------------------------
+// Appeals writer (template generation; pure-logic)
+// --------------------------------------------------------------------------
+export const appealsWriter: Skill = {
+  name: "appeals_writer",
+  description: "Generate a structured payer appeal letter from denial details, rationale, and supporting documentation.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["generate"] },
+      payer: { type: "string" }, claim_number: { type: "string" }, patient_name: { type: "string" },
+      date_of_service: { type: "string" }, denial_reason: { type: "string" }, carc_code: { type: "string" },
+      clinical_rationale: { type: "string" }, supporting_documents: { type: "array", items: { type: "string" } },
+      provider_name: { type: "string" },
+    },
+  },
+  execute(a) {
+    const docs: string[] = a.supporting_documents ?? [];
+    const reason = a.denial_reason || (a.carc_code ? `denial code ${a.carc_code}` : "the stated reason");
+    const letter = [
+      `${a.payer || "[Payer]"}\nAppeals Department\n`,
+      `Re: Appeal of Claim Denial`,
+      `Patient: ${a.patient_name || "[Patient]"}    Claim #: ${a.claim_number || "[Claim #]"}    Date of Service: ${a.date_of_service || "[DOS]"}`,
+      ``,
+      `To Whom It May Concern:`,
+      ``,
+      `We are formally appealing the denial of the above-referenced claim, which was denied for ${reason}. ` +
+        `We respectfully request reconsideration and payment of this medically necessary service.`,
+      a.clinical_rationale ? `\nClinical rationale: ${a.clinical_rationale}` : "",
+      docs.length ? `\nEnclosed supporting documentation:\n${docs.map((d) => `  - ${d}`).join("\n")}` : "",
+      `\nBased on the documentation provided, we believe this claim meets coverage criteria and should be paid. ` +
+        `Please process this appeal and remit payment. We are available to provide any additional information.`,
+      `\nSincerely,\n${a.provider_name || "[Provider]"}`,
+    ].filter(Boolean).join("\n");
+    const checklist = [
+      { item: "Claim number referenced", satisfied: !!a.claim_number },
+      { item: "Clinical rationale included", satisfied: !!a.clinical_rationale },
+      { item: "Supporting documents attached", satisfied: docs.length > 0 },
+    ];
+    return { success: true, data: { letter, missing: checklist.filter((c) => !c.satisfied).map((c) => c.item), strength: checklist.every((c) => c.satisfied) ? "strong" : "needs_more_documentation" } };
+  },
+};
+
+// --------------------------------------------------------------------------
+// Prior authorization requirements (compact embedded rules; pure-logic)
+// --------------------------------------------------------------------------
+const PA_RULES: Record<string, Record<string, { required: boolean; criteria: string; documents: string[] }>> = {
+  medicare: {
+    "70553": { required: true, criteria: "Failed conservative therapy; documented neurological findings.", documents: ["Clinical notes", "Prior imaging"] },
+    "97110": { required: false, criteria: "", documents: [] },
+    "J0135": { required: true, criteria: "Diagnosis of RA/PsA; failed conventional DMARDs.", documents: ["Diagnosis", "Prior therapy records"] },
+  },
+  aetna: {
+    "70553": { required: true, criteria: "Red-flag symptoms or failed 6 weeks conservative care.", documents: ["Clinical notes"] },
+    "27447": { required: true, criteria: "Radiographic OA; failed conservative management.", documents: ["Imaging", "Conservative care notes"] },
+  },
+  uhc: {
+    "70553": { required: true, criteria: "Per UHC radiology notification program.", documents: ["Order", "Clinical indication"] },
+  },
+};
+const PA_ALIASES: Record<string, string> = { medicare: "medicare", aetna: "aetna", uhc: "uhc", unitedhealthcare: "uhc", "united healthcare": "uhc" };
+
+export const priorAuth: Skill = {
+  name: "prior_auth",
+  description: "Check prior-authorization requirements by payer and procedure code, with criteria and required documents.",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["check_pa", "get_criteria", "get_docs", "full_lookup"] },
+      payer: { type: "string" }, procedure_code: { type: "string" },
+    },
+    required: ["payer", "procedure_code"],
+  },
+  execute(a) {
+    const payerKey = PA_ALIASES[String(a.payer ?? "").toLowerCase().trim()];
+    if (!payerKey) return { success: false, error: `Unknown payer: ${a.payer}. Supported: ${[...new Set(Object.values(PA_ALIASES))].join(", ")}` };
+    const code = String(a.procedure_code ?? "").trim().toUpperCase();
+    const rule = PA_RULES[payerKey]?.[code];
+    if (!rule) return { success: true, data: { payer: payerKey, procedure_code: code, required: false, note: "No PA rule on file; verify with payer." } };
+    if (a.action === "get_criteria") return { success: true, data: { payer: payerKey, procedure_code: code, criteria: rule.criteria } };
+    if (a.action === "get_docs") return { success: true, data: { payer: payerKey, procedure_code: code, documents: rule.documents } };
+    if (a.action === "check_pa") return { success: true, data: { payer: payerKey, procedure_code: code, required: rule.required } };
+    return { success: true, data: { payer: payerKey, procedure_code: code, ...rule } };
+  },
+};
+
+// --------------------------------------------------------------------------
+// Telehealth rules (compact embedded rules; pure-logic)
+// --------------------------------------------------------------------------
+const MEDICARE_TELEHEALTH = {
+  audio_only_behavioral_allowed: true,
+  common_modifiers: { "95": "Synchronous telemedicine via real-time audio+video", "93": "Synchronous telemedicine audio-only" },
+  place_of_service: { "10": "Telehealth in patient's home", "02": "Telehealth other than patient's home" },
+  note: "Coverage and originating-site rules vary by year/waiver; verify current CMS telehealth list.",
+};
+const STATE_TELEHEALTH: Record<string, { parity: boolean; audio_only: boolean; note: string }> = {
+  CA: { parity: true, audio_only: true, note: "Payment parity required; audio-only permitted with conditions." },
+  TX: { parity: true, audio_only: true, note: "Coverage parity; audio-only allowed for established patients." },
+  NY: { parity: true, audio_only: false, note: "Coverage parity; audio-only limited." },
+  FL: { parity: false, audio_only: true, note: "No strict payment parity statute; audio-only varies by payer." },
+};
+
+export const telehealthRules: Skill = {
+  name: "telehealth_rules",
+  description: "Telehealth billing rules: state coverage/parity, Medicare rules, and billing requirements (modifiers/POS).",
+  parameters: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["check_state_rules", "medicare_rules", "get_billing_requirements"] },
+      state: { type: "string" }, modality: { type: "string", enum: ["video", "audio-only"] },
+    },
+    required: ["action"],
+  },
+  execute(a) {
+    if (a.action === "medicare_rules") return { success: true, data: MEDICARE_TELEHEALTH };
+    if (a.action === "check_state_rules") {
+      const st = String(a.state ?? "").toUpperCase().trim();
+      const r = STATE_TELEHEALTH[st];
+      if (!r) return { success: true, data: { state: st, on_file: false, note: "No state rule on file; verify with the state Medicaid/insurance dept." } };
+      return { success: true, data: { state: st, ...r } };
+    }
+    // get_billing_requirements
+    const audioOnly = a.modality === "audio-only";
+    return { success: true, data: {
+      modality: a.modality ?? "video",
+      modifier: audioOnly ? "93" : "95",
+      place_of_service: ["10", "02"],
+      note: "Append the telehealth modifier to the CPT and use a telehealth POS (10 home, 02 other).",
+    } };
+  },
+};
+
 export const REGISTRY: Record<string, Skill> = {
   [rcmKpiCalculator.name]: rcmKpiCalculator,
   [emLevelAdvisor.name]: emLevelAdvisor,
@@ -1644,6 +1776,9 @@ export const REGISTRY: Record<string, Skill> = {
   [claimScrubber.name]: claimScrubber,
   [claimStatus.name]: claimStatus,
   [remittanceParser.name]: remittanceParser,
+  [appealsWriter.name]: appealsWriter,
+  [priorAuth.name]: priorAuth,
+  [telehealthRules.name]: telehealthRules,
 };
 
 export function toolDefinitions(names: string[]) {
